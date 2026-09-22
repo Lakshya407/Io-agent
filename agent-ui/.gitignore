@@ -1,0 +1,30 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build output
+dist
+dist-ssr
+*.local
+
+# Vite / TypeScript cache
+.vite
+node_modules/.tmp
+tsconfig.tsbuildinfo
+
+# Environment files (only the example is committed)
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

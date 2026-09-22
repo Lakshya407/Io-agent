@@ -1,0 +1,25 @@
+# AI Agent Platform — environment files and build artifacts.
+#
+# Copy this file to `.env` and adjust values as needed.
+
+# --- Full stack (docker-compose.yml) ---
+# Port the frontend (Nginx) is published on.
+FRONTEND_PORT=80
+
+# PostgreSQL password (used by both the postgres and backend services).
+POSTGRES_PASSWORD=postgres
+
+# Origins allowed by the backend CORS policy. In production the browser and
+# the API share one origin through the Nginx proxy, so cross-origin requests
+# are not normally made.
+CORS_ORIGINS=http://localhost
+
+# --- Backend (backend/.env) ---
+# Copy backend/.env.example -> backend/.env and set the JWT secret and admin
+# credentials there. Never commit real secrets.
+
+# --- Frontend (agent-ui/.env) ---
+# Only VITE_-prefixed variables are exposed to the browser. The only public
+# value is the API base URL; never place secrets in frontend env files.
+# VITE_API_BASE_URL=http://localhost:8000/api/v1   # development
+# VITE_API_BASE_URL=/api/v1                        # production (via Nginx)

@@ -1,0 +1,122 @@
+# AI Agent Platform — full stack (frontend + backend + PostgreSQL + Redis).
+#
+#   docker compose up --build      # start everything
+#   docker compose down            # stop
+#
+# Architecture:
+#
+#                    Browser
+#                       |
+#                       v
+#                 +-----------+
+#                 | Frontend  |  Nginx serves the React build and reverse-
+#                 |  (Nginx)  |  ~proxies /api + /health to the backend, so
+#                 +-----------+  the browser and API share one origin.
+#                       |
+#                       v
+#                 +-----------+
+#                 |  FastAPI  |
+#                 +-----------+
+#                    /     \
+#                   v       v
+#          +-----------+ +-----------+
+#          | PostgreSQL| |   Redis   |
+#          +-----------+ +-----------+
+#
+# The browser reaches the backend through the Nginx proxy on port 80, so no
+# cross-origin (CORS) requests are made in production. Postgres is published
+# to the host for local development only (GUI clients); Redis stays private.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ai-agent-postgres
+    restart: unless-stopped
+    # DEV ONLY: publishes Postgres to the host so GUI clients (DBeaver,
+    # pgAdmin, VS Code) can connect on localhost:5432. Remove this mapping
+    # for production — the database should stay network-private.
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ai_agent
+    volumes:
+      - ai-agent-pgdata:/var/lib/postgresql/data
+    networks:
+      - ai-agent-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: ai-agent-redis
+    restart: unless-stopped
+    networks:
+      - ai-agent-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: ai-agent-backend
+    restart: unless-stopped
+    # Load application settings, including the first-run admin credentials,
+    # from the backend environment file. The database and Redis URLs below
+    # still override the localhost values for container networking.
+    env_file:
+      - ./backend/.env
+    environment:
+      # Container-to-container networking overrides the localhost URLs in .env.
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/ai_agent
+      REDIS_URL: redis://redis:6379/0
+      # The browser talks to the backend via the Nginx proxy (same origin),
+      # so cross-origin requests are not made in production.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      # Ollama runs on the host, not as a container. A container's localhost is
+      # NOT the host's localhost, so OLLAMA_BASE_URL in backend/.env must point
+      # at host.docker.internal. This mapping guarantees the name resolves on
+      # Linux hosts too (Docker Desktop already provides it automatically).
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    # Makes host.docker.internal resolvable inside the backend container on
+    # Linux hosts. Harmless on Docker Desktop, which defines it already.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ai-agent-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')\""]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+
+  frontend:
+    build: ./agent-ui
+    container_name: ai-agent-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    networks:
+      - ai-agent-network
+    depends_on:
+      backend:
+        condition: service_healthy
+
+networks:
+  ai-agent-network:
+    driver: bridge
+
+volumes:
+  ai-agent-pgdata:
