@@ -6,7 +6,9 @@ import MessageInput from "./MessageInput";
 interface ChatWindowProps {
   messages: ChatMessage[];
   isWorking: boolean;
+  streaming: boolean;
   onSend: (text: string) => void;
+  onStop: () => void;
   onRegenerate: () => void;
   /** Bumping this value focuses the input (e.g. after "New chat"). */
   focusSignal?: number;
@@ -15,7 +17,9 @@ interface ChatWindowProps {
 export default function ChatWindow({
   messages,
   isWorking,
+  streaming,
   onSend,
+  onStop,
   onRegenerate,
   focusSignal,
 }: ChatWindowProps) {
@@ -59,7 +63,7 @@ export default function ChatWindow({
             <span></span>
             <span></span>
             <span></span>
-            Agent is preparing a response
+            {streaming ? "AI is generating…" : "Agent is preparing a response"}
           </div>
         )}
 
@@ -68,7 +72,9 @@ export default function ChatWindow({
 
       <MessageInput
         onSend={onSend}
-        disabled={isWorking}
+        onStop={onStop}
+        streaming={streaming}
+        disabled={isWorking && !streaming}
         focusSignal={focusSignal}
       />
     </main>

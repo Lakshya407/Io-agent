@@ -6,6 +6,8 @@ export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  streaming?: boolean;
+  stopped?: boolean;
 };
 
 interface MessageProps {
@@ -40,10 +42,19 @@ export default function Message({
       <div className="message-body">
         <div className="message-label">
           {message.role === "assistant" ? "AI Agent" : "You"}
+          {message.streaming ? " · generating…" : message.stopped ? " · stopped" : ""}
         </div>
-        <div className="message-content">
+        <div className={`message-content${message.streaming ? " streaming" : ""}`}>
           {message.role === "assistant" ? (
-            <Markdown content={message.content} />
+            message.content ? (
+              <Markdown content={message.content} />
+            ) : (
+              <span className="typing" aria-live="polite">
+                <span></span>
+                <span></span>
+                <span></span>
+              </span>
+            )
           ) : (
             message.content.split("\n").map((line, index) => (
               <p key={index}>{line || "\u00A0"}</p>

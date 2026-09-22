@@ -12,7 +12,7 @@ import AgentStatus, { type AgentState } from "./AgentStatus";
 import ToolCall from "./ToolCall";
 import { formatTokens } from "../../utils/format";
 
-export type ActivityStatus = "idle" | "processing" | "completed" | "error";
+export type ActivityStatus = "idle" | "processing" | "completed" | "stopped" | "error";
 
 export interface ToolCallEntry {
   id: string;
@@ -62,7 +62,7 @@ export default function ActivityPanel({
   const agentState: AgentState =
     status === "processing"
       ? "working"
-      : status === "completed"
+      : status === "completed" || status === "stopped"
         ? "completed"
         : status === "error"
           ? "error"
@@ -70,6 +70,7 @@ export default function ActivityPanel({
 
   const elapsed = elapsedMs(activity);
   const failed = status === "error";
+  const stopped = status === "stopped";
 
   return (
     <aside className="activity-panel" aria-label="Agent activity">
@@ -99,7 +100,10 @@ export default function ActivityPanel({
           <div className="activity-list">
             {PIPELINE.map((step, index) => {
               const isLast = index === PIPELINE.length - 1;
-              const done = status === "completed" || (failed && !isLast);
+              const done =
+                status === "completed" ||
+                status === "stopped" ||
+                (failed && !isLast);
               const running = status === "processing" && isLast;
               return (
                 <div
@@ -112,6 +116,7 @@ export default function ActivityPanel({
                     {done ? "✓" : failed && isLast ? "×" : running ? "◌" : "·"}
                   </span>
                   {step}
+                  {stopped && isLast ? " (stopped)" : ""}
                 </div>
               );
             })}

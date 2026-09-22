@@ -14,6 +14,8 @@ import type {
 export interface ModelListParams extends PageParams {
   /** Set to false to include disabled models (default true). */
   active_only?: boolean;
+  /** Include cached local Ollama availability per model. */
+  include_availability?: boolean;
 }
 
 export const modelsApi = {
@@ -51,5 +53,19 @@ export const modelsApi = {
   /** `DELETE /api/v1/admin/models/{id}` — returns 204. */
   remove(modelId: string): Promise<void> {
     return apiFetch<void>(`/admin/models/${modelId}`, { method: "DELETE" });
+  },
+
+  /** `POST /api/v1/admin/models/{id}/default` — set the default model. */
+  setDefault(modelId: string): Promise<Model> {
+    return apiFetch<Model>(`/admin/models/${modelId}/default`, {
+      method: "POST",
+    });
+  },
+
+  /** `GET /api/v1/models/ollama` — models installed on Ollama. */
+  ollama(): Promise<{ models: { name: string }[]; default_model?: string | null }> {
+    return apiFetch<{ models: { name: string }[]; default_model?: string | null }>(
+      "/models/ollama",
+    );
   },
 };

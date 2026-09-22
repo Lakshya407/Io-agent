@@ -10,6 +10,7 @@ from app.llm.base import (
     LLMProvider,
     LLMProviderError,
     LLMResponse,
+    LLMStreamChunk,
     LLMTimeoutError,
     LLMUnavailableError,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "LLMProvider",
     "LLMProviderError",
     "LLMResponse",
+    "LLMStreamChunk",
     "LLMTimeoutError",
     "LLMUnavailableError",
     "MockLLMProvider",

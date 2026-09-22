@@ -2695,3 +2695,8 @@ button {
 [data-theme="light"] .nav-backdrop {
   background: rgba(23, 32, 51, 0.4);
 }
+/* ---------- Streaming (Phase 2) ---------- */
+.send.stop { background: var(--error); color: #fff; }
+.send.stop:hover:not(:disabled) { background: #c9493f; }
+.message.assistant .message-content.streaming::after { content: '\258C'; margin-left: 2px; color: var(--accent); animation: pulse 1s infinite; }
+

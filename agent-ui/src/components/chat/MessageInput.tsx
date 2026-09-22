@@ -1,4 +1,4 @@
-import { FileText, Globe, Paperclip, Plus, Send } from "lucide-react";
+import { FileText, Globe, Paperclip, Plus, Send, Square } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 const plusOptions = [
@@ -9,6 +9,8 @@ const plusOptions = [
 
 interface MessageInputProps {
   onSend: (text: string) => void;
+  onStop?: () => void;
+  streaming?: boolean;
   disabled: boolean;
   /** Bumping this value focuses the input (e.g. after "New chat"). */
   focusSignal?: number;
@@ -16,6 +18,8 @@ interface MessageInputProps {
 
 export default function MessageInput({
   onSend,
+  onStop,
+  streaming = false,
   disabled,
   focusSignal,
 }: MessageInputProps) {
@@ -100,13 +104,13 @@ export default function MessageInput({
           )}
         </div>
         <button
-          className="send"
+          className={streaming ? "send stop" : "send"}
           type="button"
-          disabled={!value.trim() || disabled}
-          onClick={send}
-          aria-label="Send message"
+          disabled={streaming ? false : !value.trim() || disabled}
+          onClick={streaming ? () => onStop?.() : send}
+          aria-label={streaming ? "Stop generating" : "Send message"}
         >
-          <Send size={15} />
+          {streaming ? <Square size={15} /> : <Send size={15} />}
         </button>
       </div>
     </div>

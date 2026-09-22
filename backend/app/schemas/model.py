@@ -26,6 +26,9 @@ class ModelOut(BaseModel):
     is_default: bool
     max_tokens: int
     temperature: float
+    # Local Ollama availability. ``None`` when not requested or when the
+    # provider is not Ollama / Ollama is unreachable (unknown, not missing).
+    available: bool | None = None
     created_at: datetime
     updated_at: datetime
 

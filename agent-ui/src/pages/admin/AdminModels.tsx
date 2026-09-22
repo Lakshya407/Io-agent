@@ -1,4 +1,4 @@
-import { Cpu, Pencil, Plus, Trash2 } from "lucide-react";
+import { Cpu, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { DataTable, type Column } from "../../components/admin/DataTable";
 import Modal from "../../components/admin/Modal";
@@ -11,6 +11,7 @@ import {
   useCreateModel,
   useDeleteModel,
   useModels,
+  useSetDefaultModel,
   useToggleModelStatus,
   useUpdateModel,
 } from "../../hooks/useModels";
@@ -39,6 +40,7 @@ export default function AdminModels() {
   const updateMutation = useUpdateModel();
   const toggleMutation = useToggleModelStatus();
   const deleteMutation = useDeleteModel();
+  const defaultMutation = useSetDefaultModel();
   const { toast } = useToast();
 
   const rows = useMemo(
@@ -46,9 +48,14 @@ export default function AdminModels() {
     [data],
   );
 
+  const emptyFormWithDefault = {
+    ...emptyForm,
+    is_default: false,
+  };
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ModelRow | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(emptyFormWithDefault);
   const [deleting, setDeleting] = useState<ModelRow | null>(null);
   const [formError, setFormError] = useState("");
 
@@ -80,7 +87,7 @@ export default function AdminModels() {
   const openCreate = () => {
     setFormError("");
     setEditing(null);
-    setForm(emptyForm);
+    setForm(emptyFormWithDefault);
     setModalOpen(true);
   };
 
@@ -101,6 +108,7 @@ export default function AdminModels() {
       max_tokens: model.maxTokens,
       temperature: model.temperature,
       is_active: model.status === "Active",
+      is_default: model.isDefault,
     });
     setModalOpen(true);
   };
@@ -120,6 +128,7 @@ export default function AdminModels() {
             model_type: form.model_type,
             max_tokens: form.max_tokens,
             temperature: form.temperature,
+            is_default: form.is_default,
           },
         });
         toast("Model updated successfully.", "success");
@@ -130,6 +139,7 @@ export default function AdminModels() {
           model_identifier: form.model_identifier.trim(),
           model_type: form.model_type,
           is_active: form.is_active,
+          is_default: form.is_default,
           max_tokens: form.max_tokens,
           temperature: form.temperature,
         });
@@ -175,6 +185,18 @@ export default function AdminModels() {
     }
   };
 
+  const setDefault = async (model: ModelRow) => {
+    try {
+      await defaultMutation.mutateAsync(model.id);
+      toast(`Default model set to ${model.name}.`, "success");
+    } catch (err) {
+      toast(
+        err instanceof APIError ? err.message : "Unable to set default model.",
+        "error",
+      );
+    }
+  };
+
   const columns: Column<ModelRow>[] = [
     { key: "name", header: "Model", render: (row) => row.name },
     { key: "provider", header: "Provider", render: (row) => row.provider },
@@ -194,6 +216,36 @@ export default function AdminModels() {
           {row.status}
         </button>
       ),
+    },
+    {
+      key: "available",
+      header: "Available",
+      render: (row) =>
+        row.available === null || row.available === undefined ? (
+          <span className="pill">—</span>
+        ) : row.available ? (
+          <span className="pill available">Available</span>
+        ) : (
+          <span className="pill inactive">Missing</span>
+        ),
+    },
+    {
+      key: "default",
+      header: "Default",
+      render: (row) =>
+        row.isDefault ? (
+          <span className="pill default">Default</span>
+        ) : (
+          <button
+            type="button"
+            className="btn-action"
+            onClick={() => setDefault(row)}
+            aria-label={`Set ${row.name} as default`}
+            title="Set as default"
+          >
+            <Star size={15} />
+          </button>
+        ),
     },
     {
       key: "maxTokens",
@@ -403,6 +455,34 @@ export default function AdminModels() {
                   }))
                 }
               />
+            </label>
+          </div>
+          <div className="modal-field-row">
+            <label className="remember">
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    is_active: event.target.checked,
+                  }))
+                }
+              />
+              Enabled
+            </label>
+            <label className="remember">
+              <input
+                type="checkbox"
+                checked={form.is_default}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    is_default: event.target.checked,
+                  }))
+                }
+              />
+              Default model
             </label>
           </div>
           {formError && <p className="login-error">{formError}</p>}

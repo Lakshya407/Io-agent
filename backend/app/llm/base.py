@@ -26,6 +26,19 @@ class LLMResponse:
     metadata: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass
+class LLMStreamChunk:
+    """One normalized chunk of a streaming generation."""
+
+    content: str
+    done: bool = False
+    model: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
 class LLMProviderError(Exception):
     """Base class for every LLM provider failure.
 
@@ -68,13 +81,30 @@ class LLMProvider(ABC):
         """Generate a completion for the given message history."""
         raise NotImplementedError
 
+    async def stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        **kwargs: object,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Stream a completion as normalized chunks.
+
+        Yields ``LLMStreamChunk`` items as they arrive; the final chunk has
+        ``done=True`` with token accounting when the provider reports it.
+        """
+        raise NotImplementedError
+        yield LLMStreamChunk(content="")  # pragma: no cover
+
     async def generate_stream(
         self, messages: list[ChatMessage], **kwargs: object
     ) -> AsyncIterator[str]:
-        """Stream a completion as token chunks (SSE-ready placeholder).
+        """Legacy string-chunk stream (kept for compatibility).
 
-        Not implemented yet — the request/response version comes first.
+        Delegates to :meth:`stream` and yields raw content strings.
         """
-        raise NotImplementedError
-        # ``yield`` makes this an async generator for type-checkers.
-        yield ""  # pragma: no cover
+        async for chunk in self.stream(messages, **kwargs):
+            if chunk.content:
+                yield chunk.content

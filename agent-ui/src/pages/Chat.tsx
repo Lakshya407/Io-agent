@@ -1,21 +1,23 @@
 /**
- * Chat page (`/chat`).
+ * Chat page (`/chat`) — real-time SSE streaming.
  *
  * Conversation state model
  * ------------------------
  * `selectedId` is `null` while the user is in a brand-new (unsaved)
- * conversation; its optimistic messages live in `draft`. The moment the server
- * assigns an id, that id is adopted and the conversation's message cache is
- * seeded with the exchange so nothing flashes, then `draft` is cleared.
+ * conversation; its optimistic messages live in `draft`. The moment the
+ * stream emits `message_start`/`message_complete`, that id is adopted and the
+ * conversation's message cache is seeded so nothing flashes, then `draft` is
+ * cleared.
  *
- * For an existing conversation the React Query cache is the single source of
- * truth: optimistic messages are written into it directly, so a message is
- * never rendered twice (server history + pending buffer).
+ * Streaming model: exactly ONE assistant placeholder is created per turn and
+ * every `token` event appends to it (`content += chunk`). Stop aborts the
+ * fetch via AbortController; the partial reply stays visible and persists
+ * server-side with `status="stopped"`.
  *
  * `isNewChat` guards the first-load "select most recent" effect so that
  * clicking *New chat* is not immediately undone.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ActivityPanel, {
   emptyActivity,
   type ActivityState,
@@ -30,11 +32,12 @@ import {
   useConversations,
   useDeleteConversation,
 } from "../hooks/useConversations";
-import { useSendMessage } from "../hooks/useChat";
+import { useStreamState } from "../hooks/useChatStream";
 import { useModels } from "../hooks/useModels";
+import { chatApi } from "../api/chat";
 import { queryClient, queryKeys } from "../lib/queryClient";
 import { APIError, type PaginatedResponse } from "../types/common";
-import type { Message } from "../types/chat";
+import type { Message, StreamEvent } from "../types/chat";
 
 type MessagesUpdater = (items: Message[]) => Message[];
 
@@ -46,6 +49,20 @@ function dropLastAssistant<T extends { role: string }>(items: T[]): T[] {
   if (lastIndex === -1) return items;
   const index = items.length - 1 - lastIndex;
   return items.filter((_, itemIndex) => itemIndex !== index);
+}
+
+function friendlyStreamError(err: unknown): string {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return "Generation was stopped.";
+  }
+  if (err instanceof Error && err.message) {
+    const msg = err.message;
+    if (/unavailable/i.test(msg)) return "AI service is currently unavailable.";
+    if (/not available/i.test(msg)) return "Selected model is unavailable.";
+    return msg;
+  }
+  if (err instanceof APIError) return err.message;
+  return "Something went wrong while generating the response.";
 }
 
 export default function Chat() {
@@ -71,9 +88,11 @@ export default function Chat() {
 
   const { data: messagesData } = useConversationMessages(selectedId);
   const { data: modelsData } = useModels({ activeOnly: true });
-  const sendMutation = useSendMessage();
   const deleteConversation = useDeleteConversation();
   const { toast } = useToast();
+  const stream = useStreamState();
+  // The conversation id assigned by `message_start` for this turn (new chats).
+  const streamConvRef = useRef<string | null>(null);
 
   const modelNames = (modelsData?.items ?? [])
     .filter((model) => model.is_active)
@@ -92,11 +111,12 @@ export default function Chat() {
   // server cache (which optimistic updates also write to). One source of truth
   // → no duplicated messages.
   const messages = selectedId === null ? draft : historyMessages;
-  const isWorking = sendMutation.isPending || activity.status === "processing";
+  const isGenerating = stream.isGenerating;
+  const isWorking = isGenerating || activity.status === "processing";
 
   const agentState = activity.status === "processing"
     ? "working"
-    : activity.status === "completed"
+    : activity.status === "completed" || activity.status === "stopped"
       ? "completed"
       : activity.status === "error"
         ? "error"
@@ -135,18 +155,67 @@ export default function Chat() {
     created_at: new Date().toISOString(),
   });
 
-  const resetActivity = () => setActivity(emptyActivity());
+  const resetActivity = () => {
+    setActivity(emptyActivity());
+    stream.toIdle();
+  };
+
+  /** Append streamed text to the single assistant placeholder. */
+  const appendToken = (placeholderId: string, chunk: string) => {
+    if (selectedId === null) {
+      setDraft((current) =>
+        current.map((m) =>
+          m.id === placeholderId ? { ...m, content: m.content + chunk } : m,
+        ),
+      );
+    } else {
+      cacheMessages(selectedId, (items) =>
+        items.map((m) =>
+          m.id === placeholderId
+            ? { ...m, content: m.content + chunk }
+            : m,
+        ),
+      );
+    }
+  };
+
+  const finalizePlaceholder = (
+    placeholderId: string,
+    opts: { stopped?: boolean } = {},
+  ) => {
+    if (selectedId === null) {
+      setDraft((current) =>
+        current.map((m) =>
+          m.id === placeholderId
+            ? { ...m, streaming: false, stopped: opts.stopped }
+            : m,
+        ),
+      );
+    }
+    // Server-cached messages (backend `Message`) carry no streaming flag —
+    // the placeholder simply stops being updated; a refetch reconciles ids.
+  };
 
   const runSend = async (text: string, regenerate = false) => {
+    if (stream.isGenerating) return;
     const optimistic: ChatMessage = {
       id: `pending-${Date.now()}`,
       role: "user",
       content: text,
     };
+    const placeholderId = `streaming-${Date.now()}`;
+    const placeholder: ChatMessage = {
+      id: placeholderId,
+      role: "assistant",
+      content: "",
+      streaming: true,
+    };
     // Only name a model when the platform actually has one configured.
     const model =
       modelNames.length > 0 && selectedModel !== "Default" ? selectedModel : null;
     const startedAt = performance.now();
+    streamConvRef.current = selectedId;
+    const signal = stream.begin();
 
     setActivity({
       status: "processing",
@@ -162,53 +231,109 @@ export default function Chat() {
       ],
     });
 
-    // Show the user's message immediately, unless we are only re-running a reply.
+    // Show the user's message + an empty assistant placeholder immediately.
     if (!regenerate) {
       if (selectedId === null) {
-        setDraft((current) => [...current, optimistic]);
+        setDraft((current) => [...current, optimistic, placeholder]);
       } else {
-        cacheMessages(selectedId, (items) => [...items, toMessage(optimistic)]);
+        cacheMessages(selectedId, (items) => [
+          ...items,
+          toMessage(optimistic),
+          { ...toMessage(placeholder), id: placeholderId },
+        ]);
       }
+    } else if (selectedId === null) {
+      setDraft((current) => [...current, placeholder]);
+    } else {
+      cacheMessages(selectedId, (items) => [
+        ...items,
+        { ...toMessage(placeholder), id: placeholderId },
+      ]);
     }
 
-    try {
-      const response = await sendMutation.mutateAsync({
-        message: text,
-        conversation_id: selectedId,
-        model,
-      });
-      const assistant: ChatMessage = {
-        id: `assistant-${response.conversation_id}`,
-        role: "assistant",
-        content: response.message.content,
-      };
-      const finishedAt = performance.now();
-
-      if (selectedId === null) {
-        // Seed the new conversation so adopting its id does not flash an empty
-        // chat while the real history is fetched.
-        queryClient.setQueryData<PaginatedResponse<Message>>(
-          queryKeys.conversationMessages(response.conversation_id),
-          {
-            items: [toMessage(optimistic), toMessage(assistant)],
-            page: 1,
-            page_size: 100,
-            total: 2,
-          },
-        );
-        setSelectedId(response.conversation_id);
-        setIsNewChat(false);
-        setDraft([]);
-      } else {
-        cacheMessages(selectedId, (items) => [...items, toMessage(assistant)]);
+    const onEvent = (event: StreamEvent) => {
+      if (event.event === "activity") {
+        const { stage, detail, model: m } = event.data;
+        setActivity((prev) => ({
+          ...prev,
+          status: "processing",
+          model: m ?? prev.model,
+          toolCalls: prev.toolCalls.map((call) => ({
+            ...call,
+            detail: detail ?? call.detail,
+            status: "running" as const,
+          })),
+        }));
+      } else if (event.event === "message_start") {
+        stream.toStreaming();
+        streamConvRef.current = event.data.conversation_id;
+        if (event.data.model) {
+          setActivity((prev) => ({ ...prev, model: event.data.model }));
+        }
+      } else if (event.event === "token") {
+        appendToken(placeholderId, event.data.content);
       }
+    };
+
+    try {
+      let completedConv: string | null = null;
+      let completedModel: string | null = null;
+      let completedUsage: Message["total_tokens"] extends never
+        ? never
+        : { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
+
+      await chatApi.stream(
+        { message: text, conversation_id: selectedId, model },
+        (event) => {
+          onEvent(event);
+          if (event.event === "message_complete") {
+            completedConv = event.data.conversation_id;
+            completedModel = event.data.model;
+            completedUsage = event.data.usage;
+          }
+        },
+        signal,
+      );
+
+      const finishedAt = performance.now();
+      finalizePlaceholder(placeholderId);
+      stream.toCompleted();
+
+      if (selectedId === null && completedConv) {
+        // Seed the new conversation so adopting its id does not flash empty.
+        setDraft((current) => {
+          const userMsg = current.find((m) => m.id === optimistic.id) ?? optimistic;
+          const asstMsg = current.find((m) => m.id === placeholderId) ?? placeholder;
+          queryClient.setQueryData<PaginatedResponse<Message>>(
+            queryKeys.conversationMessages(completedConv as string),
+            {
+              items: [toMessage({ ...userMsg, id: userMsg.id }), toMessage({ ...asstMsg, id: `assistant-${completedConv}` })],
+              page: 1,
+              page_size: 100,
+              total: 2,
+            },
+          );
+          return [];
+        });
+        setSelectedId(completedConv);
+        setIsNewChat(false);
+      } else {
+        // Re-key the placeholder to the server message id on refresh safety.
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.conversationMessages(
+            (completedConv as string | null) ?? selectedId ?? "none",
+          ),
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.usage });
 
       setActivity((previous) => ({
         ...previous,
         status: "completed",
         endedAt: finishedAt,
-        model: response.model,
-        usage: response.usage,
+        model: completedModel ?? previous.model,
+        usage: (completedUsage as ActivityState["usage"]) ?? previous.usage,
         toolCalls: previous.toolCalls.map((call) => ({
           ...call,
           status: "completed",
@@ -216,35 +341,71 @@ export default function Chat() {
         })),
       }));
     } catch (err) {
-      const message =
-        err instanceof APIError ? err.message : "Unable to send the message.";
-      // Roll the optimistic user message back.
-      if (!regenerate) {
-        if (selectedId === null) {
-          setDraft((current) =>
-            current.filter((item) => item.id !== optimistic.id),
-          );
+      const aborted =
+        err instanceof DOMException && err.name === "AbortError";
+      const finishedAt = performance.now();
+      if (aborted) {
+        // Stop: keep the partial reply, mark it stopped.
+        finalizePlaceholder(placeholderId, { stopped: true });
+        stream.toStopped();
+        if (selectedId === null && streamConvRef.current) {
+          // Adopt the id so the partial reply persists across refresh.
+          const conv = streamConvRef.current;
+          setDraft((current) => {
+            const items = current.filter((m) => m.id !== placeholderId || m.content);
+            if (items.length === 0) return current;
+            queryClient.setQueryData<PaginatedResponse<Message>>(
+              queryKeys.conversationMessages(conv),
+              {
+                items: items.map((m) => toMessage(m)),
+                page: 1,
+                page_size: 100,
+                total: items.length,
+              },
+            );
+            return [];
+          });
+          setSelectedId(conv);
+          setIsNewChat(false);
         } else {
-          cacheMessages(selectedId, (items) =>
-            items.filter((item) => item.id !== optimistic.id),
-          );
+          queryClient.invalidateQueries({ queryKey: ["conversations"] });
         }
+        setActivity((previous) => ({
+          ...previous,
+          status: "stopped",
+          endedAt: finishedAt,
+          error: "Generation was stopped.",
+          toolCalls: previous.toolCalls.map((call) => ({
+            ...call,
+            status: "completed",
+            durationMs: finishedAt - startedAt,
+          })),
+        }));
+      } else {
+        const message = friendlyStreamError(err);
+        finalizePlaceholder(placeholderId);
+        stream.toError();
+        setActivity((previous) => ({
+          ...previous,
+          status: "error",
+          endedAt: finishedAt,
+          error: message,
+          toolCalls: previous.toolCalls.map((call) => ({
+            ...call,
+            status: "failed",
+          })),
+        }));
+        toast(message, "error");
       }
-      setActivity((previous) => ({
-        ...previous,
-        status: "error",
-        endedAt: performance.now(),
-        error: message,
-        toolCalls: previous.toolCalls.map((call) => ({
-          ...call,
-          status: "failed",
-        })),
-      }));
-      toast(message, "error");
     }
   };
 
+  const handleStop = () => {
+    stream.stop();
+  };
+
   const newChat = () => {
+    if (stream.isGenerating) stream.stop();
     setSelectedId(null);
     setIsNewChat(true);
     setDraft([]);
@@ -253,6 +414,7 @@ export default function Chat() {
   };
 
   const handleSelect = (conversationId: string) => {
+    if (stream.isGenerating) return;
     setSelectedId(conversationId);
     setIsNewChat(false);
     setDraft([]);
@@ -274,7 +436,9 @@ export default function Chat() {
 
   const handleDelete = async (conversationId: string) => {
     try {
-      await deleteConversation.mutateAsync(conversationId);
+      const { conversationsApi } = await import("../api/chat");
+      await conversationsApi.remove(conversationId);
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
       // Deleting the open conversation returns to a fresh new chat.
       if (selectedId === conversationId) {
         setSelectedId(null);
@@ -327,7 +491,9 @@ export default function Chat() {
           <ChatWindow
             messages={messages}
             isWorking={isWorking}
+            streaming={isGenerating}
             onSend={(text) => void runSend(text)}
+            onStop={handleStop}
             onRegenerate={regenerate}
             focusSignal={focusSignal}
           />

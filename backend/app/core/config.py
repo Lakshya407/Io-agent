@@ -69,10 +69,10 @@ class Settings(BaseSettings):
     # Model used when the request does not name one and no default is set in
     # the model catalog. Set this to a model you have pulled locally. On
     # CPU-only machines smaller models are much faster (see README).
-    ollama_default_model: str = "qwen2.5:0.5b"
+    ollama_default_model: str = "qwen2.5-coder:3b"
     # Extra models (comma separated) registered in the catalog at startup so
     # they appear in the chat UI's model dropdown. They must be pulled locally,
-    # e.g. OLLAMA_MODELS=qwen2.5:0.5b,llama3.2:3b
+    # e.g. OLLAMA_MODELS=qwen2.5-coder:3b,llama3.2:3b
     ollama_models: str = ""
     # Per-request timeout (seconds) for Ollama calls. Generations are slow, so
     # this is deliberately larger than the default API timeout. This must stay

@@ -20,6 +20,9 @@ export function useModels({ activeOnly = false }: { activeOnly?: boolean } = {})
         page: 1,
         page_size: CATALOG_PAGE_SIZE,
         active_only: activeOnly,
+        // Admin management view needs availability; the chat dropdown does
+        // not (avoids an Ollama call on every chat render).
+        include_availability: !activeOnly,
       }),
   });
 }
@@ -73,6 +76,17 @@ export function useDeleteModel() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (modelId: string) => modelsApi.remove(modelId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    },
+  });
+}
+
+export function useSetDefaultModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (modelId: string) => modelsApi.setDefault(modelId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });

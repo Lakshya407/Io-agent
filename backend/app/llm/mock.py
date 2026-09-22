@@ -6,7 +6,7 @@ check → chat service → storage → accounting) before any real provider is
 introduced, and never calls the network.
 """
 
-from app.llm.base import LLMProvider, LLMResponse
+from app.llm.base import LLMProvider, LLMResponse, LLMStreamChunk
 from app.schemas.chat import ChatMessage
 
 _GREETINGS = ("hello", "hi", "hey", "greetings", "yo")
@@ -54,5 +54,34 @@ class MockLLMProvider(LLMProvider):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
+            metadata={"provider": self.name},
+        )
+
+    async def stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        **kwargs: object,
+    ):
+        """Yield the deterministic reply word-by-word, then a done chunk."""
+        response = await self.generate(
+            messages, model=model, temperature=temperature,
+            max_tokens=max_tokens, **kwargs,
+        )
+        words = response.content.split(" ")
+        for i, word in enumerate(words):
+            piece = word if i == len(words) - 1 else word + " "
+            yield LLMStreamChunk(
+                content=piece, done=False, model=response.model,
+                metadata={"provider": self.name},
+            )
+        yield LLMStreamChunk(
+            content="", done=True, model=response.model,
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            total_tokens=response.total_tokens,
             metadata={"provider": self.name},
         )

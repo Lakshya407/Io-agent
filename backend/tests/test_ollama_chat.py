@@ -19,7 +19,7 @@ from app.llm.base import (
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.schemas.chat import ChatMessage
-from app.services.chat_service import SYSTEM_PROMPT
+from app.services.chat_service import system_prompt_for
 from tests.conftest import _create_user, _unique_email
 
 
@@ -116,7 +116,7 @@ async def test_chat_passes_full_history_to_provider(client, user_headers, llm_pr
     assert [m.role for m in second_call] == ["system", "user", "assistant", "user"]
     contents = {m.content for m in second_call}
     assert contents == {
-        SYSTEM_PROMPT,
+        system_prompt_for(llm_provider.calls[0]["model"]),
         "What is Docker?",
         "Real LLM reply.",
         "How is it different from a VM?",

@@ -13,11 +13,11 @@ from app.models.model import ModelConfig
 
 def test_configured_model_names_parses_list(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ollama_default_model", "llama3.2:1b")
-    monkeypatch.setattr(settings, "ollama_models", " qwen2.5:0.5b , ,phi3:mini ")
+    monkeypatch.setattr(settings, "ollama_models", " qwen2.5-coder:3b , ,phi3:mini ")
 
     assert _configured_model_names() == {
         "llama3.2:1b",
-        "qwen2.5:0.5b",
+        "qwen2.5-coder:3b",
         "phi3:mini",
     }
 
@@ -32,7 +32,7 @@ def test_configured_model_names_without_extras(monkeypatch: pytest.MonkeyPatch) 
 async def test_seed_registers_every_configured_model(
     db_session, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(settings, "ollama_default_model", "qwen2.5:0.5b")
+    monkeypatch.setattr(settings, "ollama_default_model", "qwen2.5-coder:3b")
     monkeypatch.setattr(settings, "ollama_models", "phi3:mini,tinyllama")
     monkeypatch.setattr("app.main.async_session_factory", lambda: _session_factory(db_session))
 
@@ -41,7 +41,7 @@ async def test_seed_registers_every_configured_model(
     rows = (await db_session.execute(select(ModelConfig))).scalars().all()
     by_name = {row.name: row for row in rows}
     # Every configured model is present, active and length-capped.
-    for name in ("qwen2.5:0.5b", "phi3:mini", "tinyllama"):
+    for name in ("qwen2.5-coder:3b", "phi3:mini", "tinyllama"):
         assert name in by_name
         assert by_name[name].is_active is True
         assert by_name[name].max_tokens == 1024
@@ -75,7 +75,7 @@ async def test_seed_is_idempotent_and_keeps_admin_changes(
     db_session, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(settings, "ollama_default_model", "llama3.2:1b")
-    monkeypatch.setattr(settings, "ollama_models", "qwen2.5:0.5b")
+    monkeypatch.setattr(settings, "ollama_models", "qwen2.5-coder:3b")
     monkeypatch.setattr("app.main.async_session_factory", lambda: _session_factory(db_session))
 
     await seed_default_model()
@@ -83,7 +83,7 @@ async def test_seed_is_idempotent_and_keeps_admin_changes(
     # clobber either change.
     disabled = (
         await db_session.execute(
-            select(ModelConfig).where(ModelConfig.name == "qwen2.5:0.5b")
+            select(ModelConfig).where(ModelConfig.name == "qwen2.5-coder:3b")
         )
     ).scalar_one()
     disabled.is_active = False
@@ -93,7 +93,7 @@ async def test_seed_is_idempotent_and_keeps_admin_changes(
 
     refreshed = (
         await db_session.execute(
-            select(ModelConfig).where(ModelConfig.name == "qwen2.5:0.5b")
+            select(ModelConfig).where(ModelConfig.name == "qwen2.5-coder:3b")
         )
     ).scalar_one()
     assert refreshed.is_active is False

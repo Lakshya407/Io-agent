@@ -137,6 +137,39 @@ return:
   an empty response — the message is always
   *"AI service is currently unavailable. Please try again."*)
 
+### `POST /api/v1/chat/stream` — streaming reply (SSE)
+- **Auth:** user
+- **Request:** same as `POST /api/v1/chat` (`message`, `conversation_id`, `model`)
+- **Response 200:** `text/event-stream` with structured frames:
+```
+event: activity
+data: {"stage": "started", "detail": "Request received"}
+
+event: activity
+data: {"stage": "model", "detail": "Using llama3.2", "model": "llama3.2", "provider": "ollama"}
+
+event: message_start
+data: {"message_id": "uuid", "conversation_id": "uuid", "model": "llama3.2"}
+
+event: token
+data: {"content": "Hello"}
+
+event: token
+data: {"content": " world"}
+
+event: activity
+data: {"stage": "completed", "detail": "Response generated"}
+
+event: message_complete
+data: {"message_id": "uuid", "conversation_id": "uuid", "model": "llama3.2", "status": "completed", "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}}
+```
+- **Error frame:** `event: error` + `data: {"message": "AI service is currently unavailable."}`
+- Client abort (Stop button → `AbortController.abort()`) preserves the
+  partial reply server-side with `status="stopped"`. No auto-reconnect: a
+  broken stream stops, keeps received content, and never resends the message.
+- **Errors:** same codes as `POST /api/v1/chat`, plus `404 NOT_FOUND` for
+  unknown/non-owned conversations (before the stream starts).
+
 ### `GET /api/v1/conversations`
 - **Auth:** user · **Query:** pagination
 - **Response 200:** paginated [`ConversationSummary`](#conversationsummary)
@@ -181,8 +214,12 @@ return:
 ## Models
 
 ### `GET /api/v1/models` — list models
-- **Auth:** user · **Query:** pagination, `active_only=true`
-- **Response 200:** paginated [`ModelOut`](#modelout)
+- **Auth:** user · **Query:** pagination, `active_only=true`,
+  `include_availability=false`
+- **Response 200:** paginated [`ModelOut`](#modelout). With
+  `include_availability=true`, Ollama-catalogued models carry
+  `available: true/false` (30s server-side cache over Ollama `/api/tags`;
+  `null` for non-Ollama models or when Ollama is unreachable).
 
 ### `GET /api/v1/models/ollama` — list models installed on Ollama
 - **Auth:** user
@@ -245,11 +282,17 @@ All mutations write an audit log entry (see `GET /admin/audit-logs`).
 - **Request:** `{ "monthly_token_limit": 1000000, "monthly_request_limit": 500, "reset_at": "2026-10-01T00:00:00Z" }` (all optional)
 - **Response 200:** [`UsageOut`](#usageout)
 
-### `POST /api/v1/admin/models` · `PUT /api/v1/admin/models/{model_id}` · `PATCH /api/v1/admin/models/{model_id}/status` · `DELETE /api/v1/admin/models/{model_id}`
+### `POST /api/v1/admin/models` · `PUT /api/v1/admin/models/{model_id}` · `PATCH /api/v1/admin/models/{model_id}/status` · `POST /api/v1/admin/models/{model_id}/default` · `DELETE /api/v1/admin/models/{model_id}`
 - **POST/PUT request:** [`ModelCreate`](#modelcreate) / [`ModelUpdate`](#modelcreate)
 - **PATCH status request:** `{ "is_active": false }`
-- **Response:** `201 ModelOut` / `200 ModelOut` / `200 ModelOut` / `204`
-- **Errors:** `404 NOT_FOUND`, `409 MODEL_NAME_TAKEN`
+- **POST default:** no body — makes exactly one active model the default
+  (previous default is cleared); a disabled model cannot become default and
+  the default cannot be disabled.
+- Enabled Ollama models are verified against the configured Ollama instance
+  when reachable (`Model is not available in the configured Ollama instance.`
+  otherwise); offline catalog management still works.
+- **Response:** `201 ModelOut` / `200 ModelOut` / `200 ModelOut` / `200 ModelOut` / `204`
+- **Errors:** `404 NOT_FOUND`, `409 MODEL_NAME_TAKEN`, `422 MODEL_INVALID_CONFIG` / `MODEL_DEFAULT_DISABLE` / `MODEL_NOT_AVAILABLE`
 
 ### `POST /api/v1/admin/tools` · `PUT /api/v1/admin/tools/{tool_id}` · `PATCH /api/v1/admin/tools/{tool_id}/status` · `DELETE /api/v1/admin/tools/{tool_id}`
 - Same shape as the model endpoints, with `TOOL_NAME_TAKEN` on conflict.
@@ -326,6 +369,7 @@ and `X-Request-ID` headers.
 
 ## Roadmap (intentionally out of scope)
 
-Streaming responses, the agent engine, RAG pipeline and tool execution remain
-placeholders (`app/agents/`) so they can be integrated without changing the API
-or service layers.
+The agent engine, RAG pipeline and tool execution remain placeholders
+(`app/agents/`) so they can be integrated without changing the API or service
+layers. Real-time streaming (`POST /api/v1/chat/stream`) and the
+backend-controlled Ollama model platform are now implemented.

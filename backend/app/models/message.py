@@ -38,6 +38,12 @@ class Message(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Lifecycle of a streamed reply: ``completed`` normally, ``stopped`` when
+    # the client aborts mid-generation, ``error`` when the provider fails
+    # after partial tokens were already emitted.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'completed'")
+    )
     prompt_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )

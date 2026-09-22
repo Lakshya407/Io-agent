@@ -16,6 +16,8 @@ export interface Model {
   is_default: boolean;
   max_tokens: number;
   temperature: number;
+  /** Local Ollama availability (null = unknown / non-Ollama). */
+  available?: boolean | null;
   created_at: string;
   updated_at: string;
 }

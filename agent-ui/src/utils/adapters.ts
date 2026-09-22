@@ -42,6 +42,7 @@ export interface ModelRow {
   type: string;
   status: "Active" | "Inactive";
   isDefault: boolean;
+  available: boolean | null;
   created: string;
   maxTokens: number;
   temperature: number;
@@ -56,6 +57,7 @@ export function toModelRow(model: Model): ModelRow {
     type: model.model_type,
     status: model.is_active ? "Active" : "Inactive",
     isDefault: model.is_default,
+    available: model.available ?? null,
     created: formatRelativeTime(model.created_at),
     maxTokens: model.max_tokens,
     temperature: model.temperature,

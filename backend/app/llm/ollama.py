@@ -23,6 +23,7 @@ from app.llm.base import (
     LLMProvider,
     LLMProviderError,
     LLMResponse,
+    LLMStreamChunk,
     LLMTimeoutError,
     LLMUnavailableError,
 )
@@ -32,6 +33,9 @@ from app.schemas.chat import ChatMessage
 # model pulls/warm-loads it, so the connect window is short while the read
 # window honours the full request timeout.
 _CONNECT_TIMEOUT_SECONDS = 10.0
+
+from collections.abc import AsyncIterator
+import json as _json
 
 
 def _matches_model(installed: str, requested: str) -> bool:
@@ -116,6 +120,128 @@ class OllamaProvider(LLMProvider):
             total_tokens=prompt_tokens + completion_tokens,
             metadata={"provider": self.name},
         )
+
+    async def stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        **kwargs: object,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """Stream a completion from Ollama's ``/api/chat`` endpoint.
+
+        Sends ``stream: True`` and yields one normalized chunk per NDJSON
+        line. The connection is always closed, including on cancellation.
+        Provider failures raise the same ``LLMProviderError`` subclasses as
+        :meth:`generate` so the service layer needs no new error mapping.
+        """
+        model = model or self.default_model
+        if not model:
+            raise LLMModelNotFoundError(
+                "No model requested and no default model is configured."
+            )
+
+        payload: dict[str, object] = {
+            "model": model,
+            "messages": [
+                {"role": m.role.value, "content": m.content} for m in messages
+            ],
+            "stream": True,
+            "options": {"temperature": temperature},
+            "keep_alive": settings.ollama_keep_alive,
+        }
+        if max_tokens is not None:
+            payload["options"]["num_predict"] = max_tokens  # type: ignore[union-attr]
+
+        try:
+            async with self._client() as client:
+                try:
+                    async with client.stream(
+                        "POST", "/api/chat", json=payload
+                    ) as response:
+                        if response.status_code == 404:
+                            detail = ""
+                            try:
+                                body = _json.loads(await response.aread())
+                                detail = str((body or {}).get("error", ""))
+                            except ValueError:
+                                pass
+                            raise LLMModelNotFoundError(
+                                f"Model not found on Ollama: {detail or 'unknown model'}"
+                            )
+                        if response.status_code >= 400:
+                            raise LLMProviderError(
+                                f"Ollama returned HTTP {response.status_code} "
+                                "for /api/chat."
+                            )
+                        async for line in response.aiter_lines():
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                data = _json.loads(line)
+                            except ValueError:
+                                raise LLMProviderError(
+                                    "Ollama returned a non-JSON stream chunk."
+                                )
+                            if data.get("error"):
+                                raise LLMProviderError(
+                                    f"Ollama stream error: {data.get('error')}"
+                                )
+                            content = (data.get("message") or {}).get("content") or ""
+                            done = bool(data.get("done", False))
+                            if done:
+                                yield LLMStreamChunk(
+                                    content="",
+                                    done=True,
+                                    model=str(data.get("model") or model),
+                                    prompt_tokens=int(
+                                        data.get("prompt_eval_count") or 0
+                                    ),
+                                    completion_tokens=int(
+                                        data.get("eval_count") or 0
+                                    ),
+                                    total_tokens=int(
+                                        data.get("prompt_eval_count") or 0
+                                    )
+                                    + int(data.get("eval_count") or 0),
+                                    metadata={"provider": self.name},
+                                )
+                            elif content:
+                                yield LLMStreamChunk(
+                                    content=content,
+                                    done=False,
+                                    model=str(data.get("model") or model),
+                                    metadata={"provider": self.name},
+                                )
+                except LLMProviderError:
+                    raise
+                except httpx.ReadTimeout:
+                    raise LLMTimeoutError(
+                        f"Ollama did not answer within {self.timeout:.0f}s "
+                        f"({self.base_url}/api/chat)."
+                    )
+                except httpx.HTTPError as exc:
+                    raise LLMProviderError(f"Ollama stream failed: {exc}")
+        except LLMProviderError:
+            raise
+        except httpx.ConnectTimeout:
+            raise LLMUnavailableError(
+                f"Cannot connect to Ollama at {self.base_url} (connect timeout)."
+            )
+        except httpx.ConnectError as exc:
+            raise LLMUnavailableError(
+                f"Cannot connect to Ollama at {self.base_url}: {exc}"
+            )
+        except httpx.ReadTimeout:
+            raise LLMTimeoutError(
+                f"Ollama did not answer within {self.timeout:.0f}s "
+                f"({self.base_url}/api/chat)."
+            )
+        except httpx.HTTPError as exc:  # noqa: BLE001 - any other transport failure
+            raise LLMProviderError(f"Ollama HTTP request failed: {exc}")
 
     async def list_models(self) -> list[str]:
         """Return the names of the models installed on the Ollama instance."""

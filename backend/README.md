@@ -98,15 +98,15 @@ ollama serve          # serves the HTTP API on http://localhost:11434
 ### 2. Pull a model
 
 ```bash
-ollama pull phi3:mini    # the default model
-ollama pull qwen2.5:0.5b # extra models listed in OLLAMA_MODELS
-ollama pull tinyllama
+ollama pull qwen2.5-coder:3b   # the default model
 ```
 
 On a machine without a dedicated GPU the model size dominates response time, so
-pick the smallest model that still answers well — `qwen2.5:0.5b` and
-`tinyllama` reply in a few seconds on CPU, `phi3:mini` is more capable but
-slower. Use a larger model only where a GPU is available.
+pick the smallest model that still answers well — `qwen2.5-coder:3b` is the
+coding-tuned default (~1.9 GB, 32k context).
+Only models pulled locally can be served; the chat dropdown lists exactly the
+active entries of the backend model catalog, so do not add names you have not
+pulled. Use a larger model only where a GPU is available.
 
 ### 3. Verify Ollama is running
 
@@ -119,7 +119,7 @@ the raw Ollama API to the browser):
 
 ```bash
   curl http://localhost:8000/health/llm
-# {"status":"healthy","provider":"ollama","base_url":"...","model":"phi3:mini","model_available":true}
+# {"status":"healthy","provider":"ollama","base_url":"...","model":"qwen2.5-coder:3b","model_available":true}
 ```
 
 ### 4. Configure the backend
@@ -129,22 +129,22 @@ Set these in `backend/.env` (see `.env.example`):
 | Variable | Example | Purpose |
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama HTTP API base URL |
-| `OLLAMA_DEFAULT_MODEL` | `phi3:mini` | Model used when a request names none |
-| `OLLAMA_MODELS` | `qwen2.5:0.5b,tinyllama` | Extra models (comma separated) shown in the dropdown |
+| `OLLAMA_DEFAULT_MODEL` | `qwen2.5-coder:3b` | Model used when a request names none |
+| `OLLAMA_MODELS` | `` (empty) | Extra models (comma separated) shown in the dropdown |
 | `OLLAMA_REQUEST_TIMEOUT` | `180` | Per-request timeout (seconds) |
 | `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded |
 
 Every model named in `OLLAMA_DEFAULT_MODEL` or `OLLAMA_MODELS` is registered in
 the model catalog on first startup, so it appears in the chat UI's dropdown and
 can be selected per conversation. Each must be pulled locally first, e.g.
-`ollama pull qwen2.5:0.5b`. Requests may only use catalogued models, so listing
+`ollama pull qwen2.5-coder:3b`. Requests may only use catalogued models, so listing
 a model here is what makes it runnable.
 
 **Response speed on CPU-only machines.** Generation rate is roughly
 proportional to model size, and loading a cold model from disk costs tens of
 seconds on top of that. Three things keep the demo responsive:
 
-1. Use the smallest model that still answers well (qwen2.5:0.5b on CPU).
+1. Use the smallest model that still answers well (qwen2.5-coder:3b on CPU).
 2. `OLLAMA_KEEP_ALIVE=30m` keeps the model in memory between requests, so only
    the first request pays the load cost (Ollama otherwise unloads it after ~5
    min idle). Set it to `0` to unload after every request.
@@ -222,8 +222,8 @@ All configuration comes from `.env` (see `.env.example`). Notable variables:
 | `CORS_ORIGINS` | `http://localhost:3000,5173` | Allowed origins |
 | `DEFAULT_ADMIN_*` | — | First-boot administrator |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama HTTP API base URL |
-| `OLLAMA_DEFAULT_MODEL` | `phi3:mini` | Model used when none is requested |
-| `OLLAMA_MODELS` | `qwen2.5:0.5b` | Extra models shown in the dropdown |
+| `OLLAMA_DEFAULT_MODEL` | `qwen2.5-coder:3b` | Model used when none is requested |
+| `OLLAMA_MODELS` | `` (empty) | Extra models shown in the dropdown |
 | `OLLAMA_REQUEST_TIMEOUT` | `180` | LLM request timeout (seconds) |
 | `OLLAMA_KEEP_ALIVE` | `30m` | Keep the model loaded between requests |
 

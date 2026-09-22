@@ -61,4 +61,24 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** Present while the assistant reply is still streaming / stopped. */
+  streaming?: boolean;
+  stopped?: boolean;
 }
+
+/** Frontend generation lifecycle for one chat turn. */
+export type StreamStatus =
+  | "idle"
+  | "sending"
+  | "streaming"
+  | "completed"
+  | "stopped"
+  | "error";
+
+/** Structured SSE events emitted by `POST /api/v1/chat/stream`. */
+export type StreamEvent =
+  | { event: "activity"; data: { stage: string; detail?: string; model?: string; provider?: string; duration_ms?: number } }
+  | { event: "message_start"; data: { message_id: string; conversation_id: string; model: string; is_new_conversation?: boolean } }
+  | { event: "token"; data: { content: string } }
+  | { event: "message_complete"; data: { message_id: string; conversation_id: string; model: string; status?: string; usage?: TokenUsage } }
+  | { event: "error"; data: { message?: string; code?: string } };

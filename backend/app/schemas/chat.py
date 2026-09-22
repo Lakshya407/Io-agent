@@ -77,5 +77,6 @@ class MessageOut(BaseModel):
     role: MessageRole
     content: str
     model: str | None = None
+    status: str = "completed"
     total_tokens: int = 0
     created_at: datetime

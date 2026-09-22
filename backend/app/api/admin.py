@@ -226,6 +226,32 @@ async def set_model_status(
     return ModelOut.model_validate(model)
 
 
+@router.post(
+    "/models/{model_id}/default",
+    response_model=ModelOut,
+    summary="Set the default model",
+    operation_id="admin_models_default",
+)
+async def set_model_default(
+    model_id: UUID,
+    admin: CurrentAdmin,
+    db: DBSession,
+    request: Request,
+) -> ModelOut:
+    """Make exactly one active model the default for chat requests."""
+    model = await ModelService(db).set_default(model_id)
+    await AuditService(db).log(
+        action=AuditAction.MODEL_UPDATED,
+        resource_type="model",
+        resource_id=str(model.id),
+        user_id=admin.id,
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
+    return ModelOut.model_validate(model)
+
+
 @router.delete(
     "/models/{model_id}",
     status_code=status.HTTP_204_NO_CONTENT,
