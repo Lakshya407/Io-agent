@@ -1,6 +1,7 @@
-"""Usage router: personal usage + usage history.
+"""Usage router: personal usage, summary and usage history.
 
-Endpoint contracts are documented in docs/API.md.
+Endpoint contracts are documented in docs/API.md. Every endpoint only ever
+returns the authenticated user's own data.
 """
 
 from datetime import datetime
@@ -9,7 +10,12 @@ from fastapi import APIRouter, Query
 
 from app.core.dependencies import CurrentUser, DBSession, PaginationParams
 from app.schemas.common import PaginatedResponse
-from app.schemas.usage import UsageHistoryItem, UsageOut
+from app.schemas.usage import (
+    UsageHistoryItem,
+    UsageMeOut,
+    UsageOut,
+    UsageSummaryOut,
+)
 from app.services.usage_service import UsageService
 
 router = APIRouter(tags=["usage"])
@@ -28,6 +34,38 @@ async def get_usage(
     """Return the authenticated user's monthly allowance summary."""
     allowance = await UsageService(db).get_usage(current_user.id)
     return UsageOut.model_validate(allowance)
+
+
+@router.get(
+    "/me",
+    response_model=UsageMeOut,
+    summary="Get my full usage view",
+    operation_id="usage_me",
+)
+async def get_my_usage(
+    current_user: CurrentUser,
+    db: DBSession,
+) -> UsageMeOut:
+    """Today/month usage, remaining allowance and the current model.
+
+    Combines the daily counters (Redis fast path, PostgreSQL fallback) with
+    the monthly allowance. Own data only.
+    """
+    return await UsageService(db).get_me(current_user.id)
+
+
+@router.get(
+    "/summary",
+    response_model=UsageSummaryOut,
+    summary="Get my usage summary",
+    operation_id="usage_summary",
+)
+async def get_usage_summary(
+    current_user: CurrentUser,
+    db: DBSession,
+) -> UsageSummaryOut:
+    """Compact usage summary (tokens/requests today + this month)."""
+    return await UsageService(db).get_summary(current_user.id)
 
 
 @router.get(

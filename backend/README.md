@@ -72,7 +72,7 @@ The first startup seeds an administrator from `DEFAULT_ADMIN_EMAIL` /
 ### Running the tests
 
 ```bash
-pytest                          # 54 tests
+pytest                          # 145 tests
 ```
 
 Tests run inside a rolled-back transaction, so they never pollute the
@@ -206,6 +206,43 @@ Only `OLLAMA_BASE_URL` needs to change (for example to
 from configuration, never hard-coded. To use a different provider later,
 implement `app/llm/base.py` and register it in `app/llm/factory.py`; the chat
 API and service layers stay untouched.
+
+## Usage tracking & limits
+
+`UsageService` (`app/services/usage_service.py`) is the single owner of usage
+bookkeeping — no route handler writes usage directly.
+
+- **`usage_records`** — one row per chat round: user/conversation/message ids,
+  model + provider, prompt/completion/total tokens, `is_estimated`, duration,
+  status (`completed` / `failed` / `cancelled`) and error details.
+  Indexed on `(user_id, created_at)` and `(conversation_id, created_at)`.
+  Tokens count toward billing for any status; the request quota is only
+  consumed by `completed` and `cancelled`. When a provider reports no token
+  counts the value is estimated at ~4 characters per token and flagged.
+  Recording failures are **logged, never raised** — a successful chat response
+  is never destroyed by bookkeeping.
+- **`usage_allowances`** — per-user monthly/daily token and request limits plus
+  an `is_enabled` kill switch. Limits are enforced **before** the LLM call
+  (`429 USAGE_LIMIT_EXCEEDED`), using Redis as a fast path with PostgreSQL as
+  the source of truth; a Redis outage degrades to a DB read instead of failing.
+- **Endpoints:** `GET /usage`, `/usage/me`, `/usage/summary`, `/usage/history`
+  (own data only) and the admin analytics set under
+  `/admin/usage/summary|users|models|timeline`.
+
+## Admin console resources
+
+Three admin-managed tables back the console (all admin-only, all with
+migrations):
+
+| Table | Purpose |
+|---|---|
+| `prompts` | System prompts; `name` unique, at most one `is_default` (partial unique index), `status` active/draft/inactive |
+| `routing_rules` | `request_type` → `primary_model` (+ optional fallback), dense ascending `priority`; applied only when a chat request names a `request_type` and no explicit model |
+| `rate_limit_rules` | `all`/`user`/`ip` scope, `limit` per `window_seconds`, `action: block`; empty table falls back to `RATE_LIMIT_PER_*` |
+
+Routing validates primary/fallback models against the active-model allow-list,
+so it can never route to a disabled model. Rate-limit rules are cached in Redis
+for 30s (`ratelimit:rules:v1`) and counters are kept in `ratelimit:stats:{date}`.
 
 ## Configuration
 

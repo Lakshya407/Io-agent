@@ -112,12 +112,16 @@ return:
 - **Auth:** user
 - **Request:**
 ```json
-{ "message": "Hello", "conversation_id": null, "model": null }
+{ "message": "Hello", "conversation_id": null, "model": null, "request_type": null }
 ```
   Omit `conversation_id` to start a new conversation; pass an existing one to
   continue it. `model` overrides the default model; it must be an active model
   in the catalog (or the configured default), otherwise `422
   MODEL_NOT_AVAILABLE` is returned — the frontend cannot run arbitrary models.
+  `request_type` (e.g. `"Code"`, `"Summarize"`) selects a **routing rule** when
+  no explicit `model` is given — see
+  [`POST /admin/routing`](#post-apiv1adminrouting); an explicit `model` always
+  wins, and routing can never bypass the active-model allow-list.
   Conversation history is loaded from PostgreSQL and sent to the provider with
   every request.
 - **Response 200:**
@@ -139,7 +143,8 @@ return:
 
 ### `POST /api/v1/chat/stream` — streaming reply (SSE)
 - **Auth:** user
-- **Request:** same as `POST /api/v1/chat` (`message`, `conversation_id`, `model`)
+- **Request:** same as `POST /api/v1/chat` (`message`, `conversation_id`,
+  `model`, `request_type`)
 - **Response 200:** `text/event-stream` with structured frames:
 ```
 event: activity
@@ -249,9 +254,37 @@ data: {"message_id": "uuid", "conversation_id": "uuid", "model": "llama3.2", "st
 
 ## Usage
 
+Usage is recorded per chat round in `usage_records` by `UsageService`
+(`app/services/usage_service.py`) — route handlers never touch it. Every record
+carries the user/conversation/message ids, model, provider, prompt/completion/
+total tokens, `is_estimated`, timestamp, duration and a status of
+`completed` / `failed` / `cancelled` (plus error details when relevant). Tokens
+count toward billing for **any** status; the request quota is only consumed by
+`completed` and `cancelled` rounds. If the provider reports no token counts the
+value is estimated at ~4 characters per token and flagged `is_estimated`.
+
+Allowances are checked **before** the LLM call (`429 USAGE_LIMIT_EXCEEDED`
+otherwise), using Redis as a fast path with PostgreSQL as the source of truth.
+A Redis failure is logged and falls back to PostgreSQL — it never blocks chat.
+Recording a usage entry must never break a successful response; failures are
+logged instead.
+
 ### `GET /api/v1/usage` — my allowance
 - **Auth:** user
 - **Response 200:** [`UsageOut`](#usageout)
+
+### `GET /api/v1/usage/me` — my usage view
+- **Auth:** user
+- **Response 200:** [`UsageMeOut`](#usagemeout) — today's and this month's
+  tokens/requests, remaining allowance (monthly + optional daily), the current
+  model and whether the caller is currently allowed to send. Only ever the
+  authenticated user's own numbers.
+
+### `GET /api/v1/usage/summary` — compact personal summary
+- **Auth:** user
+- **Response 200:** [`UsageSummaryOut`](#usagesummaryout) — lighter variant of
+  `/usage/me` (tokens/requests today and this month, remaining, current model)
+  for cheap polling.
 
 ### `GET /api/v1/usage/history` — my aggregated usage
 - **Auth:** user · **Query:** pagination, `model`, `provider`, `date_from`, `date_to`
@@ -275,12 +308,40 @@ All mutations write an audit log entry (see `GET /admin/audit-logs`).
 - **Query:** pagination
 - **Response 200:** paginated `UserOut` / paginated `AdminUsageRow`
 
+### `GET /api/v1/admin/usage/summary`
+- **Auth:** admin · **Query:** `range`, `date_from`, `date_to`, `model`, `user_id`
+- **Response 200:** [`AdminUsageSummary`](#adminusagesummary)
+
+### `GET /api/v1/admin/usage/users` · `GET /api/v1/admin/usage/models`
+- **Auth:** admin · **Query:** same filters as `/usage/summary`
+- **Response 200:** `list[`AdminUserUsageRow`](#adminuserusagerow)` /
+  `list[`AdminModelUsageRow`](#adminmodelusagerow)``, biggest consumers first
+
+### `GET /api/v1/admin/usage/timeline`
+- **Auth:** admin · **Query:** same filters as `/usage/summary`
+- **Response 200:** `list[`UsageTimelinePoint`](#usagetimelinepoint)``, **newest
+  first** — one bucket per day (or hour for `range=today`), each with requests,
+  failed requests, prompt/completion/total tokens and average latency.
+
+**Analytics filters** (shared by all four endpoints above): `range` is one of
+`today` | `7d` | `30d` | `all`; `date_from` / `date_to` are ISO datetimes and
+**win over `range`** when both are given; `model` matches the stored model
+display name; `user_id` is a UUID. All of them are optional — omitted means
+"all time, every model, every user".
+
+These literal paths are registered **before** `GET /admin/usage/{user_id}` so
+they can never be swallowed by the path parameter.
+
 ### `GET /api/v1/admin/usage/{user_id}`
 - **Response 200:** [`UsageOut`](#usageout) · **Errors:** `404 NOT_FOUND`
 
 ### `PATCH /api/v1/admin/users/{user_id}/allowance`
-- **Request:** `{ "monthly_token_limit": 1000000, "monthly_request_limit": 500, "reset_at": "2026-10-01T00:00:00Z" }` (all optional)
+- **Request:** `{ "monthly_token_limit": 1000000, "monthly_request_limit": 500, "daily_token_limit": null, "daily_request_limit": null, "is_enabled": true, "reset_at": "2026-10-01T00:00:00Z" }` (all optional)
 - **Response 200:** [`UsageOut`](#usageout)
+  Fields present in the payload are updated (the service reads
+  `model_fields_set`), so sending `daily_token_limit: null` explicitly **clears**
+  the daily limit (unlimited) while omitting the key leaves it untouched.
+  `is_enabled: false` blocks the user outright, ahead of any token check.
 
 ### `POST /api/v1/admin/models` · `PUT /api/v1/admin/models/{model_id}` · `PATCH /api/v1/admin/models/{model_id}/status` · `POST /api/v1/admin/models/{model_id}/default` · `DELETE /api/v1/admin/models/{model_id}`
 - **POST/PUT request:** [`ModelCreate`](#modelcreate) / [`ModelUpdate`](#modelcreate)
@@ -296,6 +357,36 @@ All mutations write an audit log entry (see `GET /admin/audit-logs`).
 
 ### `POST /api/v1/admin/tools` · `PUT /api/v1/admin/tools/{tool_id}` · `PATCH /api/v1/admin/tools/{tool_id}/status` · `DELETE /api/v1/admin/tools/{tool_id}`
 - Same shape as the model endpoints, with `TOOL_NAME_TAKEN` on conflict.
+
+### `GET /api/v1/prompts` · `POST /api/v1/prompts` · `GET /api/v1/prompts/{prompt_id}` · `PATCH /api/v1/prompts/{prompt_id}` · `DELETE /api/v1/prompts/{prompt_id}`
+- **Auth:** admin for every method (the list is paginated; `active_only=true`
+  narrows it to `status: "active"`).
+- **GET response:** paginated [`PromptOut`](#promptout), newest first
+- **POST request:** `{ "name": "...", "content": "...", "purpose": "...", "model": null, "version": 1, "status": "draft", "is_default": false }` — only `name` and `content` are required.
+- **PATCH request:** any subset of the `PromptOut` fields (`PromptUpdate`).
+- **Response:** `201 PromptOut` / `200 PromptOut` / `204`
+- **Errors:** `409 PROMPT_NAME_TAKEN`, `404 NOT_FOUND`.
+- Setting `is_default: true` clears the previous default in the same
+  transaction — at most one prompt is ever the default.
+
+### `GET /api/v1/admin/routing` · `POST /api/v1/admin/routing` · `PUT /api/v1/admin/routing/order` · `PATCH /api/v1/admin/routing/{rule_id}` · `DELETE /api/v1/admin/routing/{rule_id}`
+- **Auth:** admin · **GET response:** `list[`RoutingRuleOut`](#routingruleout)`, highest priority first (unpaginated — the rule set is small).
+- **POST request:** `{ "request_type": "Code", "primary_model": "llama3.2", "fallback_model": "qwen2.5", "is_active": true }` — `request_type` is unique, `priority` is auto-assigned to the end.
+- **PUT order request:** `{ "ids": ["uuid", ...] }` — **every** rule id exactly once, highest priority first.
+- **PATCH request:** any subset (`request_type`, `primary_model`, `fallback_model`, `is_active`, `priority`).
+- **Response:** `201 RoutingRuleOut` / `list[RoutingRuleOut]` / `200 RoutingRuleOut` / `204`
+- **Errors:** `404 NOT_FOUND`, `409 ROUTING_REQUEST_TYPE_TAKEN`, `422` when a
+  primary/fallback model is not an active catalog model.
+
+### `GET /api/v1/admin/rate-limits/stats` · `GET /api/v1/admin/rate-limits` · `POST /api/v1/admin/rate-limits` · `PATCH /api/v1/admin/rate-limits/{rule_id}` · `DELETE /api/v1/admin/rate-limits/{rule_id}`
+- **Auth:** admin
+- **GET stats response:** `{ "date": "2026-09-24", "checked": 8420, "blocked": 120, "violations": 42 }` — today (UTC), best-effort from Redis; zeros when Redis has no data.
+- **GET list response:** `list[`RateLimitRuleOut`](#ratelimitruleout)`
+- **POST request:** `{ "scope": "all", "limit": 100, "window_seconds": 3600, "action": "block", "is_active": true }` — `limit` and `window_seconds` required, `action` only supports `block`.
+- **PATCH request:** any subset.
+- **Response:** `200 RateLimitStatsOut` / `200 list` / `201 RateLimitRuleOut` / `200 RateLimitRuleOut` / `204`
+- Rules take effect on the **next request** (the rule cache TTL is 30s);
+  deleting every rule falls back to the built-in per-minute/per-hour settings.
 
 ### `GET /api/v1/admin/audit-logs`
 - **Query:** pagination, `action`, `resource_type`, `user_id`
@@ -338,8 +429,62 @@ All mutations write an audit log entry (see `GET /admin/audit-logs`).
 
 ### UsageOut
 ```json
-{ "user_id": "uuid", "monthly_token_limit": 10000000, "monthly_request_limit": 1000, "tokens_used": 21, "requests_used": 2, "tokens_remaining": 9999979, "requests_remaining": 998, "is_allowed": true, "reset_at": "2026-10-01T00:00:00Z" }
+{ "user_id": "uuid", "monthly_token_limit": 10000000, "monthly_request_limit": 1000, "daily_token_limit": null, "daily_request_limit": null, "is_enabled": true, "tokens_used": 21, "requests_used": 2, "tokens_remaining": 9999979, "requests_remaining": 998, "is_allowed": true, "reset_at": "2026-10-01T00:00:00Z" }
 ```
+`daily_*` are `null` = unlimited; `is_enabled: false` blocks the user entirely.
+
+### UsageMeOut
+```json
+{ "tokens_today": 1200, "requests_today": 3, "tokens_remaining_today": 9900, "requests_remaining_today": 17, "tokens_this_month": 45000, "requests_this_month": 90, "tokens_remaining": 9955000, "requests_remaining": 910, "monthly_token_limit": 10000000, "monthly_request_limit": 1000, "daily_token_limit": null, "daily_request_limit": null, "is_enabled": true, "is_allowed": true, "reset_at": "2026-10-01T00:00:00Z", "current_model": "llama3.2" }
+```
+
+### UsageSummaryOut
+```json
+{ "tokens_today": 1200, "requests_today": 3, "tokens_this_month": 45000, "requests_this_month": 90, "tokens_remaining": 9955000, "current_model": "llama3.2" }
+```
+
+### AdminUsageSummary
+```json
+{ "total_requests": 45230, "successful_requests": 44981, "failed_requests": 249, "cancelled_requests": 180, "total_tokens": 1289340, "prompt_tokens": 890110, "completion_tokens": 399230, "active_users": 87, "average_response_time_ms": 842 }
+```
+
+### AdminModelUsageRow
+```json
+{ "model": "llama3.2", "provider": "ollama", "requests": 820, "successful": 812, "failed": 8, "prompt_tokens": 41000, "completion_tokens": 19000, "total_tokens": 60000, "average_response_time_ms": 742 }
+```
+
+### AdminUserUsageRow
+```json
+{ "user_id": "uuid", "email": "user@example.com", "name": "User", "requests": 120, "successful": 118, "failed": 2, "prompt_tokens": 8000, "completion_tokens": 4000, "total_tokens": 12000, "average_response_time_ms": 810 }
+```
+
+### UsageTimelinePoint
+```json
+{ "period": "2026-09-17", "requests": 42, "failed_requests": 1, "prompt_tokens": 8100, "completion_tokens": 3900, "total_tokens": 12000, "average_response_time_ms": 795 }
+```
+
+### PromptOut
+```json
+{ "id": "uuid", "name": "Default Assistant", "purpose": "General agent behavior", "model": null, "version": 1, "status": "active", "content": "You are a helpful assistant.", "is_default": true, "created_at": "...", "updated_at": "..." }
+```
+Create requires `name` + `content`; every other field is optional on
+`PATCH` (`PromptUpdate`).
+
+### RoutingRuleOut
+```json
+{ "id": "uuid", "priority": 1, "request_type": "Code", "primary_model": "llama3.2", "fallback_model": "qwen2.5", "is_active": true, "created_at": "...", "updated_at": "..." }
+```
+Create requires `request_type` + `primary_model` (priority is auto-assigned);
+`PUT /admin/routing/order` takes `{ "ids": ["uuid", ...] }` highest priority
+first.
+
+### RateLimitRuleOut
+```json
+{ "id": "uuid", "scope": "all", "limit": 100, "window_seconds": 3600, "action": "block", "is_active": true, "created_at": "...", "updated_at": "..." }
+```
+`scope` is `all` | `user` | `ip`; create requires `limit` + `window_seconds`.
+`GET /admin/rate-limits/stats` returns
+`{ "date": "2026-09-24", "checked": 8420, "blocked": 120, "violations": 42 }`.
 
 ### DashboardStats
 ```json
@@ -355,10 +500,42 @@ All mutations write an audit log entry (see `GET /admin/audit-logs`).
 
 ## Rate limiting
 
-Applied per user (or per client IP for unauthenticated endpoints) via Redis:
-`RATE_LIMIT_PER_MINUTE` and `RATE_LIMIT_PER_HOUR` requests. Exceeding the limit
-returns `429 RATE_LIMIT_EXCEEDED`. Every response includes `X-Response-Time`
-and `X-Request-ID` headers.
+Enforced per request by the `rate_limit` dependency
+(`app/core/rate_limit.py`) using Redis counters. Resolution order:
+
+1. **Active `rate_limit_rules`** from PostgreSQL, cached in Redis under
+   `ratelimit:rules:v1` for 30 seconds (DB reads are rare, cache misses cheap).
+2. If the rules table is **empty**, the built-in `RATE_LIMIT_PER_MINUTE`
+   (default 60) and `RATE_LIMIT_PER_HOUR` (default 1000) settings apply.
+
+Only `action: "block"` exists: exceeding a rule returns
+`429 RATE_LIMIT_EXCEEDED`. Counters are keyed per rule + identity (user or
+client IP) + window, so they roll over as the window slides. Each request is
+also counted in the daily stats hash `ratelimit:stats:{date}` (`checked`,
+`blocked`, `violations`), which expires after 7 days — surfaced by
+`GET /api/v1/admin/rate-limits/stats`.
+
+Every response includes `X-Response-Time` and `X-Request-ID` headers.
+
+## Prompts
+
+Admin-only CRUD over system prompts. Exactly one prompt may be
+`is_default: true` (enforced by a partial unique index); setting a new default
+clears the previous one in the same transaction. `status` is `active` |
+`draft` | `inactive`, and `GET /prompts?active_only=true` filters to active
+prompts — the chat system instruction is taken from the active default.
+
+## Model routing
+
+Admin-only CRUD over `routing_rules`. A rule maps a `request_type` (unique) to
+a `primary_model` and optional `fallback_model`; both must be names of active
+models in the catalog — the service validates them against the same allow-list
+chat uses, so routing can never select a disabled model. `priority` is
+dense and ascending (1 = first); `PUT /admin/routing/order` takes the full id
+list highest-priority first, and `DELETE` renumbers the rest.
+
+ChatService consults routing **only** when the request supplies a
+`request_type` **and** no explicit `model`; an explicit `model` always wins.
 
 ## Audit actions
 

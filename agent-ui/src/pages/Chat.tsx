@@ -326,7 +326,8 @@ export default function Chat() {
         });
       }
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.usage });
+      // Keep the usage indicator/allowance in sync after the turn completes.
+      queryClient.invalidateQueries({ queryKey: ["usage"] });
 
       setActivity((previous) => ({
         ...previous,

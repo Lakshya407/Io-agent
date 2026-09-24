@@ -41,10 +41,25 @@ export const queryKeys = {
   tools: (page: number, pageSize: number, activeOnly: boolean) =>
     ["tools", { page, pageSize, activeOnly }] as const,
   usage: ["usage", "current"] as const,
+  usageMe: ["usage", "me"] as const,
+  usageSummary: ["usage", "summary"] as const,
   usageHistory: (params: object) => ["usage", "history", params] as const,
   adminUsage: (page: number, pageSize: number) =>
     ["admin", "usage", { page, pageSize }] as const,
+  adminUsageSummary: (params: object) =>
+    ["admin", "usage", "summary", params] as const,
+  adminUsageUsers: (params: object) =>
+    ["admin", "usage", "users", params] as const,
+  adminUsageModels: (params: object) =>
+    ["admin", "usage", "models", params] as const,
+  adminUsageTimeline: (params: object) =>
+    ["admin", "usage", "timeline", params] as const,
   auditLogs: (params: object) => ["admin", "audit-logs", params] as const,
+  prompts: (page: number, pageSize: number, activeOnly: boolean) =>
+    ["prompts", { page, pageSize, activeOnly }] as const,
+  routing: ["routing"] as const,
+  rateLimits: ["rate-limits"] as const,
+  rateLimitStats: ["rate-limits", "stats"] as const,
   conversations: (page: number, pageSize: number) =>
     ["conversations", { page, pageSize }] as const,
   conversationMessages: (conversationId: string) =>

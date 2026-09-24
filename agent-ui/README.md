@@ -52,6 +52,9 @@ agent-ui/
 │   │   ├── tools.ts
 │   │   ├── usage.ts
 │   │   ├── admin.ts
+│   │   ├── prompts.ts    # system prompt CRUD (admin)
+│   │   ├── routing.ts    # model routing rules (admin)
+│   │   ├── rateLimits.ts # rate limit rules + daily stats (admin)
 │   │   ├── auditLogs.ts
 │   │   └── health.ts
 │   ├── hooks/          # TanStack Query wrappers per resource
@@ -59,14 +62,14 @@ agent-ui/
 │   ├── context/        # AuthContext (session) + ToastContext (feedback)
 │   ├── components/
 │   │   ├── admin/      # tables, modals, filters, stat cards, pagination
-│   │   ├── chat/       # chat window, history sidebar, message input
+│   │   ├── chat/       # chat window, history sidebar, message input, usage
 │   │   └── agent/      # activity panel, tool calls, status
 │   ├── pages/
 │   │   ├── Chat.tsx
 │   │   ├── Login.tsx       # the single sign-in page (user + admin)
 │   │   ├── Register.tsx    # user sign-up
 │   │   ├── Unauthorized.tsx # 403 page (authenticated, not permitted)
-│   │   └── admin/      # overview, users, usage, models, tools, audit, …
+│   │   └── admin/      # overview, users, usage, models, tools, prompts, …
 │   ├── auth/            # route guards + post-login routing
 │   │   ├── ProtectedRoute.tsx  # requires a valid session (any user)
 │   │   ├── RoleRoute.tsx       # additionally requires a backend role
@@ -191,8 +194,26 @@ Component ──► Hook ──► API function ──► API client ──► F
 | Conversations | `/api/v1/conversations`, `…/messages`, `DELETE …/{id}` |
 | Models | `/api/v1/models`, `/admin/models` (POST/PUT/PATCH/DELETE) |
 | Tools | `/api/v1/tools`, `/admin/tools` (POST/PUT/PATCH/DELETE) |
-| Usage | `/api/v1/usage`, `/usage/history`, `/admin/usage` |
+| Usage | `/api/v1/usage`, `/usage/me`, `/usage/summary`, `/usage/history` |
+| Usage analytics | `/admin/usage/summary`, `/admin/usage/users`, `/admin/usage/models`, `/admin/usage/timeline` (range/model/user filters) |
 | Admin | `/api/v1/admin/dashboard`, `/admin/audit-logs`, `/admin/users/{id}/allowance` |
+| Prompts | `/api/v1/prompts` + `/{id}` (GET/POST/PATCH/DELETE, admin) |
+| Routing | `/admin/routing`, `/admin/routing/order`, `/admin/routing/{id}` |
+| Rate limits | `/admin/rate-limits`, `/admin/rate-limits/stats`, `/admin/rate-limits/{id}` |
+
+### Usage
+
+Usage is server-owned end to end:
+
+- **Chat sidebar** — `UsageIndicator` sits above the user menu and shows
+  today's and this month's tokens/requests, the remaining monthly allowance and
+  the model the next message will use. It renders nothing while loading or if
+  the endpoint errors, so usage trouble never disturbs the chat UI.
+- **Cache invalidation** — every completed, failed or stopped turn invalidates
+  the `["usage"]` prefix, so the indicator and allowance refresh themselves.
+- **Admin analytics** (`Usage`, `API Usage`, `User Analytics`) share one filter
+  shape — range (`today` / `7d` / `30d` / custom), model and user — sent to the
+  four `/admin/usage/*` endpoints. Explicit custom dates win over the range.
 
 ## Authentication Architecture
 
@@ -308,11 +329,16 @@ ProtectedRoute        → valid session required
 
 ## Demo Pages
 
-A few admin pages (Analytics, API Usage, Knowledge Base, Prompts, Model
-Routing, Rate Limits, Agent Activity) cover features the backend does not
-implement yet — there are no endpoints for them, so none were invented. They
-retain clearly-labelled static demo data and are out of scope for this
-integration.
+Two admin pages — **Knowledge Base** and **Agent Activity** — cover features
+the backend does not implement yet: there are no endpoints for them, so none
+were invented. They retain clearly-labelled static demo data
+(`src/data/knowledgeBase.ts`, `src/data/activity.ts`) and are out of scope for
+this integration.
+
+Every other admin page (Overview, Users, Usage, Models, Tools, Audit Logs,
+**Prompts**, **Model Routing**, **Rate Limits**, **API Usage**,
+**User Analytics**) is driven by the real API through TanStack Query, with
+loading, error, empty and pagination states.
 
 ## Troubleshooting
 

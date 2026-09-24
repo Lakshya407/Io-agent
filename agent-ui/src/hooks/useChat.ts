@@ -18,7 +18,8 @@ export function useSendMessage() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.conversationMessages(data.conversation_id),
       });
-      queryClient.invalidateQueries({ queryKey: queryKeys.usage });
+      // Refresh every personal usage view (allowance, /me, summary, history).
+      queryClient.invalidateQueries({ queryKey: ["usage"] });
     },
   });
 }

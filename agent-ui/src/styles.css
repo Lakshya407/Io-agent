@@ -2700,3 +2700,73 @@ button {
 .send.stop:hover:not(:disabled) { background: #c9493f; }
 .message.assistant .message-content.streaming::after { content: '\258C'; margin-left: 2px; color: var(--accent); animation: pulse 1s infinite; }
 
+/* ---------- Usage indicator (Phase 9) ---------- */
+.history .usage-indicator {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* The indicator itself supplies the bottom margin, so the user menu no
+   longer needs its own auto margin to stay pinned. */
+.history .usage-indicator + .user-menu,
+.history .usage-indicator ~ .user-menu {
+  margin-top: 0;
+}
+.usage-indicator-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.usage-indicator-title {
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.usage-indicator-model {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 20px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-indicator-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+.usage-indicator-row span {
+  color: var(--muted);
+}
+.usage-indicator-row strong {
+  color: var(--text);
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.usage-indicator-warn {
+  margin: 0;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+/* UsageIndicator returns null while loading/errored — keep the user menu
+   pinned to the bottom of the sidebar in that case. */
+.history > .user-menu { margin-top: auto; }
+

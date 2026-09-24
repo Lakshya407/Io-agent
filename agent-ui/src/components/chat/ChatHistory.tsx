@@ -10,6 +10,7 @@ import { MessageSquarePlus, Search, Trash2 } from "lucide-react";
 import { useState, type MouseEvent } from "react";
 import { dayGroupLabel, formatRelativeTime } from "../../utils/format";
 import type { Conversation } from "../../types/chat";
+import UsageIndicator from "./UsageIndicator";
 import UserMenu from "./UserMenu";
 
 interface ChatHistoryProps {
@@ -164,6 +165,7 @@ export default function ChatHistory({
           ))}
         </nav>
       )}
+      <UsageIndicator />
       <UserMenu />
     </aside>
   );

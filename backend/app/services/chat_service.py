@@ -37,6 +37,11 @@ from app.llm.factory import get_llm_provider
 from app.models import MessageRole
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.usage import (
+    REQUEST_STATUS_CANCELLED,
+    REQUEST_STATUS_COMPLETED,
+    REQUEST_STATUS_FAILED,
+)
 from app.models.user import User
 from app.schemas.chat import (
     ChatMessage,
@@ -46,6 +51,8 @@ from app.schemas.chat import (
     TokenUsageSchema,
 )
 from app.services.model_service import ModelService
+from app.services.prompt_service import PromptService
+from app.services.routing_service import RoutingService
 from app.services.usage_service import UsageService
 
 MAX_TITLE_LENGTH = 60
@@ -86,6 +93,8 @@ class ChatService:
         self.llm = llm or get_llm_provider()
         self.usage = UsageService(db)
         self.models = ModelService(db)
+        self.prompts = PromptService(db)
+        self.routing = RoutingService(db)
 
     async def list_conversations(
         self, user_id: UUID, offset: int, limit: int
@@ -149,17 +158,17 @@ class ChatService:
             self.db.add(conversation)
             await self.db.flush()
 
-        # 2. Enforce the monthly allowance before doing any work.
-        allowance = await self.usage.get_or_create_allowance(user.id)
-        if not allowance.is_allowed:
-            raise UsageLimitExceededException(
-                "Monthly usage allowance exceeded. Please contact an administrator."
-            )
+        # 2. Enforce the allowance (monthly + daily + enabled) before doing
+        #    any work — an over-quota request never reaches the LLM.
+        await self.usage.check_allowance(user.id)
 
-        # 3. Resolve and validate the model. The frontend cannot run an
-        #    arbitrary model: the name must be an active catalog entry or the
-        #    configured default.
-        model_name = await self._resolve_model(request.model)
+        # 3. Resolve and validate the model. An explicit model wins;
+        #    otherwise an active routing rule for ``request_type`` is
+        #    consulted. The name must still be an active catalog entry or
+        #    the configured default — the frontend cannot run an arbitrary
+        #    model.
+        requested = await self._requested_model(request)
+        model_name = await self._resolve_model(requested)
         model_config = await self.models.get_by_name(model_name)
         temperature = (
             model_config.temperature if model_config else DEFAULT_TEMPERATURE
@@ -181,12 +190,35 @@ class ChatService:
         #    real identity instead of hallucinating a vendor model.
         history = await self._recent_history(conversation.id)
         messages = [
-            ChatMessage(role=MessageRole.SYSTEM, content=system_prompt_for(model_name)),
+            ChatMessage(
+                role=MessageRole.SYSTEM,
+                content=await self._system_prompt_for(model_name),
+            ),
             *history,
         ]
-        response = await self._generate(
-            conversation.id, model_name, messages, temperature, max_tokens
-        )
+        started = time.perf_counter()
+        try:
+            response = await self._generate(
+                conversation.id, model_name, messages, temperature, max_tokens
+            )
+        except Exception as exc:
+            # Failed request: still recorded (status + latency + error info)
+            # so the admin dashboard sees outages, then re-raise the original
+            # error unchanged. The commit also persists the user message that
+            # was already flushed. Usage-recording failures are swallowed and
+            # logged by the helper so they never mask the real error.
+            code = getattr(exc, "code", None) or "INTERNAL_ERROR"
+            message = getattr(exc, "message", None) or type(exc).__name__
+            await self._record_failed_request(
+                user_id=user.id,
+                conversation_id=conversation.id,
+                model=model_name,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                error={"code": code, "message": str(message)[:500]},
+            )
+            raise
+        duration_ms = (time.perf_counter() - started) * 1000
+
         # 6. Persist the assistant's reply.
         assistant_message = Message(
             conversation_id=conversation.id,
@@ -198,10 +230,22 @@ class ChatService:
             total_tokens=response.total_tokens,
         )
         self.db.add(assistant_message)
+        await self.db.flush()
 
-        # 7. Account for usage.
-        await self.usage.record_usage(
-            allowance, response.prompt_tokens, response.completion_tokens
+        # 7. Record usage: one usage record + allowance/Redis counters,
+        #    committed atomically with the messages above.
+        await self.usage.record_request(
+            user_id=user.id,
+            conversation_id=conversation.id,
+            message_id=assistant_message.id,
+            model=response.model or model_name,
+            provider=str(response.metadata.get("provider") or self.llm.name),
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+            duration_ms=duration_ms,
+            status=REQUEST_STATUS_COMPLETED,
+            prompt_text=_messages_text(messages),
+            completion_text=response.content,
         )
 
         await self.db.commit()
@@ -253,24 +297,21 @@ class ChatService:
             await self.db.flush()
             is_new = True
 
-        # 2. Allowance check before any work.
-        allowance = await self.usage.get_or_create_allowance(user.id)
-        if not allowance.is_allowed:
+        # 2. Allowance check (monthly + daily + enabled) before any work.
+        try:
+            await self.usage.check_allowance(user.id)
+        except UsageLimitExceededException as exc:
             yield {
                 "event": "error",
-                "data": {
-                    "code": "USAGE_LIMIT_EXCEEDED",
-                    "message": (
-                        "Monthly usage allowance exceeded. "
-                        "Please contact an administrator."
-                    ),
-                },
+                "data": {"code": exc.code, "message": exc.message},
             }
             return
 
-        # 3. Resolve + validate the model.
+        # 3. Resolve + validate the model (routing consulted when no
+        #    explicit model was requested).
         try:
-            model_name = await self._resolve_model(request.model)
+            requested = await self._requested_model(request)
+            model_name = await self._resolve_model(requested)
         except ValidationException as exc:
             yield {
                 "event": "error",
@@ -335,7 +376,8 @@ class ChatService:
         history = await self._recent_history(conversation.id)
         messages = [
             ChatMessage(
-                role=MessageRole.SYSTEM, content=system_prompt_for(model_name)
+                role=MessageRole.SYSTEM,
+                content=await self._system_prompt_for(model_name),
             ),
             *history,
         ]
@@ -375,11 +417,23 @@ class ChatService:
             assistant_message.completion_tokens = completion_tokens
             assistant_message.total_tokens = prompt_tokens + completion_tokens
             assistant_message.status = "completed"
-            await self.usage.record_usage(
-                allowance, prompt_tokens, completion_tokens
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            # Record usage after the stream completes: one usage record +
+            # allowance/Redis counters, committed with the message update.
+            await self.usage.record_request(
+                user_id=user.id,
+                conversation_id=conversation.id,
+                message_id=assistant_message.id,
+                model=response_model,
+                provider=self.llm.name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                duration_ms=elapsed_ms,
+                status=REQUEST_STATUS_COMPLETED,
+                prompt_text=_messages_text(messages),
+                completion_text=final_content,
             )
             await self.db.commit()
-            elapsed_ms = (time.perf_counter() - started) * 1000
             logger.info(
                 "LLM stream completed provider=%s model=%s conversation=%s "
                 "duration_ms=%.0f tokens=%d",
@@ -417,6 +471,18 @@ class ChatService:
             )
             assistant_message.content = "".join(accumulated)
             assistant_message.status = "error"
+            await self._record_stream_failure(
+                user=user,
+                conversation_id=conversation.id,
+                message_id=assistant_message.id,
+                model=model_name,
+                started=started,
+                error={
+                    "code": "MODEL_NOT_AVAILABLE",
+                    "message": "The selected model is not available.",
+                },
+                completion_text="".join(accumulated),
+            )
             await self.db.commit()
             yield {
                 "event": "error",
@@ -431,18 +497,29 @@ class ChatService:
                 self.llm.name, model_name, conversation.id, exc,
             )
             partial = "".join(accumulated)
-            if partial.strip():
-                # Keep what was already generated so a refresh shows it.
-                assistant_message.content = partial
-                assistant_message.status = "error"
-                await self.db.commit()
-            else:
-                await self.db.delete(assistant_message)
-                await self.db.commit()
             # Map to user-friendly messages without leaking internals.
             msg = "AI service is currently unavailable. Please try again."
             if isinstance(exc, LLMModelNotFoundError):
                 msg = "The selected model is not available."
+            if partial.strip():
+                # Keep what was already generated so a refresh shows it.
+                assistant_message.content = partial
+                assistant_message.status = "error"
+                kept_message_id = assistant_message.id
+            else:
+                await self.db.delete(assistant_message)
+                # The assistant row is gone — do not reference it.
+                kept_message_id = None
+            await self._record_stream_failure(
+                user=user,
+                conversation_id=conversation.id,
+                message_id=kept_message_id,
+                model=model_name,
+                started=started,
+                error={"code": "SERVICE_UNAVAILABLE", "message": msg},
+                completion_text=partial,
+            )
+            await self.db.commit()
             yield {"event": "error", "data": {"message": msg}}
         finally:
             if stopped:
@@ -450,9 +527,55 @@ class ChatService:
                     partial = "".join(accumulated)
                     assistant_message.content = partial
                     assistant_message.status = "stopped"
+                    # Client abort (Stop button): usage still recorded so
+                    # cancelled requests are visible in the dashboard.
+                    await self.usage.record_request(
+                        user_id=user.id,
+                        conversation_id=conversation.id,
+                        message_id=assistant_message.id,
+                        model=model_name,
+                        provider=self.llm.name,
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        status=REQUEST_STATUS_CANCELLED,
+                        prompt_text=_messages_text(messages),
+                        completion_text=partial,
+                    )
                     await self.db.commit()
                 except Exception:
                     logger.exception("Failed to persist stopped stream")
+
+    async def _requested_model(self, request: ChatRequest) -> str | None:
+        """Explicit model, else the routing rule for ``request_type``, else None.
+
+        ``None`` lets :meth:`_resolve_model` fall back to default resolution,
+        so requests without a model and without routing behave exactly as
+        before routing existed.
+        """
+        if request.model is not None:
+            return request.model
+        if request.request_type:
+            routed = await self.routing.resolve_model(request.request_type)
+            if routed:
+                logger.info(
+                    "Routing request_type=%s -> model=%s",
+                    request.request_type,
+                    routed,
+                )
+            return routed
+        return None
+
+    async def _system_prompt_for(self, model_name: str) -> str:
+        """Admin-configured default prompt, else the built-in template.
+
+        The single DB query only runs when a default prompt exists; with no
+        prompts configured the historical built-in instruction is used.
+        """
+        custom = await self.prompts.get_active_default()
+        if custom is not None:
+            return custom.content
+        return system_prompt_for(model_name)
 
     async def _resolve_model(self, requested: str | None) -> str:
         """Pick the model for this request and confirm it is permitted."""
@@ -543,6 +666,83 @@ class ChatService:
         )
         return response
 
+    async def _record_failed_request(
+        self,
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+        model: str,
+        duration_ms: float,
+        error: dict[str, Any],
+    ) -> None:
+        """Persist a ``failed`` usage record for the non-streaming path.
+
+        Best effort by contract: any failure here is logged loudly and
+        swallowed so usage bookkeeping can never mask the original error or
+        turn a clean HTTP error into a 500.
+        """
+        try:
+            await self.usage.record_request(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                model=model,
+                provider=self.llm.name,
+                duration_ms=duration_ms,
+                status=REQUEST_STATUS_FAILED,
+                error=error,
+            )
+            await self.db.commit()
+        except Exception:
+            logger.exception(
+                "Failed to record failed LLM request user=%s model=%s",
+                user_id,
+                model,
+            )
+            try:
+                await self.db.rollback()
+            except Exception:
+                logger.exception("Rollback after usage-recording failure failed")
+
+    async def _record_stream_failure(
+        self,
+        *,
+        user: User,
+        conversation_id: UUID,
+        message_id: UUID | None,
+        model: str,
+        started: float,
+        error: dict[str, Any],
+        completion_text: str = "",
+    ) -> None:
+        """Persist a ``failed`` usage record for the streaming path.
+
+        Called *before* the caller's commit so the usage row lands in the
+        same transaction as the partial-message update. Failures are logged,
+        never raised — the SSE ``error`` event must still be delivered.
+        """
+        try:
+            await self.usage.record_request(
+                user_id=user.id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                model=model,
+                provider=self.llm.name,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                status=REQUEST_STATUS_FAILED,
+                error=error,
+                completion_text=completion_text,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record failed stream request user=%s model=%s",
+                user.id,
+                model,
+            )
+            try:
+                await self.db.rollback()
+            except Exception:
+                logger.exception("Rollback after usage-recording failure failed")
+
     async def _recent_history(
         self, conversation_id: UUID, limit: int = HISTORY_LIMIT
     ) -> list[ChatMessage]:
@@ -583,3 +783,12 @@ def _title_from(message: str) -> str:
     """Derive a conversation title from its first message."""
     title = " ".join(message.split())
     return title[:MAX_TITLE_LENGTH] if title else "New chat"
+
+
+def _messages_text(messages: list[ChatMessage]) -> str:
+    """Flatten provider-bound messages into one string.
+
+    Used only for best-effort token estimation when the provider reports no
+    token counts (see ``UsageService.resolve_tokens``).
+    """
+    return " ".join(m.content for m in messages)

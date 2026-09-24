@@ -17,16 +17,40 @@ from app.schemas.admin import AuditLogOut, DashboardStats
 from app.schemas.common import PaginatedResponse
 from app.schemas.model import ModelCreate, ModelOut, ModelStatusUpdate, ModelUpdate
 from app.schemas.tool import ToolCreate, ToolOut, ToolStatusUpdate, ToolUpdate
-from app.schemas.usage import AdminUsageRow, AllowanceUpdate, UsageOut
+from app.schemas.usage import (
+    AdminModelUsageRow,
+    AdminUsageRow,
+    AdminUsageSummary,
+    AdminUserUsageRow,
+    AllowanceUpdate,
+    UsageOut,
+    UsageTimelinePoint,
+)
 from app.schemas.user import UserOut
 from app.services.audit_service import AuditService
 from app.services.admin_service import get_dashboard_stats
 from app.services.model_service import ModelService
 from app.services.tool_service import ToolService
-from app.services.usage_service import UsageService
+from app.services.usage_service import UsageService, resolve_period
 from app.services.user_service import UserService
 
 router = APIRouter(tags=["admin"])
+
+# --- Usage analytics query params (shared by the admin usage endpoints) --
+UsageRangeParam = Annotated[
+    str | None,
+    Query(alias="range", description="Preset window: today | 7d | 30d | all"),
+]
+UsageDateFromParam = Annotated[
+    datetime | None, Query(description="Custom range start (inclusive)")
+]
+UsageDateToParam = Annotated[
+    datetime | None, Query(description="Custom range end (inclusive)")
+]
+UsageModelParam = Annotated[str | None, Query(description="Filter by model name")]
+UsageUserParam = Annotated[
+    UUID | None, Query(description="Filter by a single user id")
+]
 
 
 def _client_ip(request: Request) -> str | None:
@@ -93,6 +117,98 @@ async def list_usage(
         page=pagination.page,
         page_size=pagination.page_size,
         total=total,
+    )
+
+
+# NOTE: the literal /usage/{summary,users,models,timeline} routes must be
+# declared BEFORE /usage/{user_id} so Starlette never tries to parse
+# "summary" etc. as a UUID path parameter.
+
+@router.get(
+    "/usage/summary",
+    response_model=AdminUsageSummary,
+    summary="Aggregated usage totals (admin)",
+    operation_id="admin_usage_summary",
+)
+async def usage_summary(
+    admin: CurrentAdmin,
+    db: DBSession,
+    range_: UsageRangeParam = None,
+    date_from: UsageDateFromParam = None,
+    date_to: UsageDateToParam = None,
+    model: UsageModelParam = None,
+    user_id: UsageUserParam = None,
+) -> AdminUsageSummary:
+    """Request/token totals, failure counts, active users and avg latency."""
+    start, end = resolve_period(range_, date_from, date_to)
+    return await UsageService(db).admin_summary(
+        date_from=start, date_to=end, model=model, user_id=user_id
+    )
+
+
+@router.get(
+    "/usage/users",
+    response_model=list[AdminUserUsageRow],
+    summary="Usage grouped by user (admin)",
+    operation_id="admin_usage_users",
+)
+async def usage_by_user(
+    admin: CurrentAdmin,
+    db: DBSession,
+    range_: UsageRangeParam = None,
+    date_from: UsageDateFromParam = None,
+    date_to: UsageDateToParam = None,
+    model: UsageModelParam = None,
+    user_id: UsageUserParam = None,
+) -> list[AdminUserUsageRow]:
+    """Per-user totals for the filtered period (biggest consumers first)."""
+    start, end = resolve_period(range_, date_from, date_to)
+    return await UsageService(db).admin_by_user(
+        date_from=start, date_to=end, model=model, user_id=user_id
+    )
+
+
+@router.get(
+    "/usage/models",
+    response_model=list[AdminModelUsageRow],
+    summary="Usage grouped by model (admin)",
+    operation_id="admin_usage_models",
+)
+async def usage_by_model(
+    admin: CurrentAdmin,
+    db: DBSession,
+    range_: UsageRangeParam = None,
+    date_from: UsageDateFromParam = None,
+    date_to: UsageDateToParam = None,
+    model: UsageModelParam = None,
+    user_id: UsageUserParam = None,
+) -> list[AdminModelUsageRow]:
+    """Per-model totals for the filtered period (biggest consumers first)."""
+    start, end = resolve_period(range_, date_from, date_to)
+    return await UsageService(db).admin_by_model(
+        date_from=start, date_to=end, model=model, user_id=user_id
+    )
+
+
+@router.get(
+    "/usage/timeline",
+    response_model=list[UsageTimelinePoint],
+    summary="Usage over time (admin)",
+    operation_id="admin_usage_timeline",
+)
+async def usage_timeline(
+    admin: CurrentAdmin,
+    db: DBSession,
+    range_: UsageRangeParam = None,
+    date_from: UsageDateFromParam = None,
+    date_to: UsageDateToParam = None,
+    model: UsageModelParam = None,
+    user_id: UsageUserParam = None,
+) -> list[UsageTimelinePoint]:
+    """Daily request/token series for the filtered period (newest first)."""
+    start, end = resolve_period(range_, date_from, date_to)
+    return await UsageService(db).admin_timeline(
+        date_from=start, date_to=end, model=model, user_id=user_id
     )
 
 

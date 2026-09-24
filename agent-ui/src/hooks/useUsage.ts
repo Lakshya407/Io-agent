@@ -1,5 +1,6 @@
 /**
- * Usage hooks — the current user's allowance and aggregated history.
+ * Usage hooks — the current user's allowance, personal usage view and
+ * aggregated history.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +12,27 @@ export function useUsage() {
   return useQuery({
     queryKey: queryKeys.usage,
     queryFn: () => usageApi.current(),
+  });
+}
+
+/**
+ * Full personal usage view (today/month, remaining allowance, current model).
+ *
+ * Self-invalidating on every `["usage"]` prefix change, so it refreshes after
+ * each chat turn. Renders as null in the UI when it errors — see UsageIndicator.
+ */
+export function useUsageMe() {
+  return useQuery({
+    queryKey: queryKeys.usageMe,
+    queryFn: () => usageApi.me(),
+  });
+}
+
+/** Compact personal usage summary (tokens/requests today + this month). */
+export function useUsageSummary() {
+  return useQuery({
+    queryKey: queryKeys.usageSummary,
+    queryFn: () => usageApi.summary(),
   });
 }
 

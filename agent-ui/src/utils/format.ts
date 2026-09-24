@@ -106,3 +106,20 @@ export function dayGroupLabel(iso: string): string {
     day: "numeric",
   });
 }
+
+/** Average response time in milliseconds → `842 ms`, `1.4 s`, `2 min 5 s`. */
+export function formatLatency(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${trimDecimal(seconds)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds - minutes * 60);
+  return `${minutes} min ${rest} s`;
+}
+
+/** successful/total requests → `99.4%` (`—` when there are no requests). */
+export function successRate(successful: number, total: number): string {
+  if (total <= 0) return "—";
+  return `${trimDecimal((successful / total) * 100)}%`;
+}

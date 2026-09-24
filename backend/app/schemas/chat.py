@@ -31,6 +31,11 @@ class ChatRequest(BaseModel):
         default=None, description="Reuse an existing conversation"
     )
     model: str | None = Field(default=None, description="Model name override")
+    request_type: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Routing request type used to pick a model when none is given",
+    )
 
 
 class TokenUsageSchema(BaseModel):

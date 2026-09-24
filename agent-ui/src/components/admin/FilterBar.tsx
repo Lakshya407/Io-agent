@@ -15,6 +15,9 @@ interface FilterBarProps {
   filters?: FilterOption[];
   dateValue?: string;
   onDateChange?: (value: string) => void;
+  /** End date of a custom range — renders a second date input when given. */
+  dateToValue?: string;
+  onDateToChange?: (value: string) => void;
 }
 
 function normalise(
@@ -32,6 +35,8 @@ export default function FilterBar({
   filters = [],
   dateValue,
   onDateChange,
+  dateToValue,
+  onDateToChange,
 }: FilterBarProps) {
   return (
     <div className="filter-bar">
@@ -69,7 +74,16 @@ export default function FilterBar({
           className="filter-select"
           value={dateValue ?? ""}
           onChange={(event) => onDateChange(event.target.value)}
-          aria-label="Date"
+          aria-label={onDateToChange ? "Date from" : "Date"}
+        />
+      )}
+      {onDateToChange && (
+        <input
+          type="date"
+          className="filter-select"
+          value={dateToValue ?? ""}
+          onChange={(event) => onDateToChange(event.target.value)}
+          aria-label="Date to"
         />
       )}
     </div>
