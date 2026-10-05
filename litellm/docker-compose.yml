@@ -2,10 +2,8 @@ services:
   postgres:
     image: postgres:16
     container_name: litellm_postgres
-    environment:
-      POSTGRES_DB: litellm
-      POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: litellm123
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     volumes:
@@ -20,10 +18,8 @@ services:
       - "4000:4000"
     volumes:
       - ./config.yml:/app/config.yaml
-    environment:
-      OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
-      LITELLM_MASTER_KEY: sk-master-12345
-      DATABASE_URL: postgresql://litellm:litellm123@postgres:5432/litellm
+    env_file:
+      - .env
     command:
       - "--config"
       - "/app/config.yaml"
