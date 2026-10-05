@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Io-agent branding assets</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px;
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f4f4f5; color: #18181b;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 24px; color: #71717a; font-size: 13px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+       color: #52525b; margin: 30px 0 12px; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 14px; }
+  .card {
+    background: #fff; border: 1px solid #e4e4e7; border-radius: 12px;
+    padding: 16px 12px 12px; width: 172px; text-align: center;
+  }
+  .card .stage {
+    height: 108px; display: flex; align-items: center; justify-content: center;
+    gap: 10px; border-radius: 8px; margin-bottom: 10px;
+    background: repeating-conic-gradient(#f4f4f5 0% 25%, #ffffff 0% 50%) 50%/16px 16px;
+  }
+  .card .stage.dark {
+    background: repeating-conic-gradient(#2a2a2e 0% 25%, #222225 0% 50%) 50%/16px 16px;
+  }
+  .card img { max-width: 76px; max-height: 76px; display: block; }
+  .card img.wide { max-width: 132px; }
+  .card .name { font-size: 11px; font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+  .card .meta { font-size: 10px; color: #a1a1aa; margin-top: 2px; }
+
+  .panel { display: flex; gap: 14px; flex-wrap: wrap; }
+  .panel .lightbox, .panel .darkbox {
+    border-radius: 12px; padding: 20px; display: flex; gap: 18px;
+    align-items: center; justify-content: center; flex: 1 1 320px; min-height: 150px;
+  }
+  .lightbox  { background: #ffffff; border: 1px solid #e4e4e7; }
+  .darkbox   { background: #171717; border: 1px solid #2a2a2a; }
+  .lightbox img.logo { height: 62px; }
+  .darkbox  img.logo { height: 62px; }
+  .caption { font-size: 12px; margin-top: 8px; }
+  .lightbox .caption { color: #52525b; }
+  .darkbox  .caption { color: #a1a1aa; }
+  .stack { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+  .note {
+    background: #fff; border: 1px solid #e4e4e7; border-left: 3px solid #171717;
+    border-radius: 8px; padding: 12px 14px; margin-top: 28px; font-size: 12.5px;
+    color: #3f3f46;
+  }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+         background: #f4f4f5; padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Io-agent — generated branding assets</h1>
+<p class="sub">All derived from <code>branding/io.png</code> by <code>branding/generate_assets.py</code>.
+Written byte-identically to <code>static/static/</code> and <code>backend/open_webui/static/</code>,
+plus the repo-root <code>static/favicon.png</code> that <code>/favicon.png</code> serves.
+Open this file in a browser to see it — the two chips shown on dark below are the
+ones the app renders for every model avatar that has no image of its own.</p>
+
+<h2>In context — light &amp; dark</h2>
+<div class="panel">
+  <div class="lightbox">
+    <div class="stack">
+      <img class="logo" src="../static/static/splash.png" alt="light" />
+      <div class="caption">splash.png — dark glyph, no tile</div>
+    </div>
+    <div class="stack">
+      <img class="logo" src="../static/static/favicon.png" alt="chip" />
+      <div class="caption">favicon.png — the chip used for model avatars, the “New Chat” logo and the browser tab</div>
+    </div>
+    <div class="stack">
+      <img class="logo" src="../backend/open_webui/static/logo.png" alt="logo" />
+      <div class="caption">logo.png — white tile + dark glyph (PWA)</div>
+    </div>
+  </div>
+  <div class="darkbox">
+    <div class="stack">
+      <img class="logo" src="../static/static/splash-dark.png" alt="dark" />
+      <div class="caption">splash-dark.png — white glyph, no tile</div>
+    </div>
+    <div class="stack">
+      <img class="logo" src="../static/static/favicon.png" alt="chip on dark" />
+      <div class="caption">favicon.png — same chip on dark</div>
+    </div>
+    <div class="stack">
+      <img class="logo" src="../static/static/favicon-dark.png" alt="fav dark" />
+      <div class="caption">favicon-dark.png — dark disc, white glyph (login &amp; onboarding)</div>
+    </div>
+  </div>
+</div>
+
+<h2>Icon set</h2>
+<div class="row">
+  <div class="card">
+    <div class="stage"><img src="../static/static/favicon.png" alt="favicon" /></div>
+    <div class="name">favicon.png</div><div class="meta">white disc + dark glyph, 500²</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/favicon.png" alt="root favicon" /></div>
+    <div class="name">static/favicon.png (root)</div><div class="meta">served at /favicon.png — must equal the one above</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/static/favicon-dark.png" alt="favicon dark" /></div>
+    <div class="name">favicon-dark.png</div><div class="meta">dark disc + white glyph (inverse pair)</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/static/favicon-96x96.png" alt="96" /></div>
+    <div class="name">favicon-96x96.png</div><div class="meta">96 × 96</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/static/favicon.ico" alt="ico" /></div>
+    <div class="name">favicon.ico</div><div class="meta">multi-size ICO</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/static/favicon.svg" alt="svg" /></div>
+    <div class="name">favicon.svg</div><div class="meta">vector, embedded glyph</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/static/apple-touch-icon.png" alt="apple" /></div>
+    <div class="name">apple-touch-icon</div><div class="meta">180², white tile + dark glyph</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/static/web-app-manifest-192x192.png" alt="192" /></div>
+    <div class="name">web-app-manifest-192</div><div class="meta">192², white tile, maskable</div>
+  </div>
+  <div class="card">
+    <div class="stage"><img src="../static/static/web-app-manifest-512x512.png" alt="512" /></div>
+    <div class="name">web-app-manifest-512</div><div class="meta">512², white tile, maskable</div>
+  </div>
+</div>
+
+<h2>Splash (login screen / app loading)</h2>
+<div class="panel">
+  <div class="lightbox"><div class="stack">
+    <img class="logo" src="../static/static/splash.png" alt="splash" />
+    <div class="caption">splash.png — light theme</div>
+  </div></div>
+  <div class="darkbox"><div class="stack">
+    <img class="logo" src="../static/static/splash-dark.png" alt="splash dark" />
+    <div class="caption">splash-dark.png — dark theme</div>
+  </div></div>
+</div>
+
+<h2>Source</h2>
+<div class="row">
+  <div class="card" style="width:230px">
+    <div class="stage" style="height:170px">
+      <img src="../branding/io.png" style="max-width:150px;max-height:150px" alt="source" />
+    </div>
+    <div class="name">branding/io.png</div>
+    <div class="meta">2400 × 2729 RGBA · white glyph only</div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>Asset strategy.</strong> The source glyph is pure white on transparent, so it is invisible on
+  light backgrounds. Light contexts (<code>splash.png</code>) get a
+  <code>#171717</code> glyph; dark contexts (<code>splash-dark.png</code>,
+  <code>favicon-dark.png</code>) keep the white glyph; context-independent icons
+  (favicon / apple-touch / PWA) get an opaque dark tile with the white glyph so
+  they remain visible on any background or OS tile colour.
+</div>
+
+</body>
+</html>

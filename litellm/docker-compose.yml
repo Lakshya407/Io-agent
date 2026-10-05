@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: litellm_postgres
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    depends_on:
+      - postgres
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config.yml:/app/config.yaml
+    environment:
+      OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
+      LITELLM_MASTER_KEY: sk-master-12345
+      DATABASE_URL: postgresql://litellm:litellm123@postgres:5432/litellm
+    command:
+      - "--config"
+      - "/app/config.yaml"
+
+volumes:
+  postgres_data:
