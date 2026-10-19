@@ -2,27 +2,68 @@ services:
   postgres:
     image: postgres:16
     container_name: litellm_postgres
-    env_file:
-      - .env
     ports:
       - "5432:5432"
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: litellm
+    restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     ports:
       - "4000:4000"
     volumes:
-      - ./config.yml:/app/config.yaml
+      - ./config.yml:/app/config.yaml:ro
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - "--config"
       - "/app/config.yaml"
+    networks:
+      - ai-network
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      - litellm
+    ports:
+      - "8080:8080"
+    environment:
+      OPENAI_API_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      ENABLE_OLLAMA_API: "false"
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+    volumes:
+      - open_webui_data:/app/backend/data
+    networks:
+      - ai-network
 
 volumes:
   postgres_data:
+  open_webui_data:
+
+networks:
+  ai-network:
+    driver: bridge
