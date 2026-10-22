@@ -20,7 +20,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
+  omniroute:
+    image: diegosouzapw/omniroute:latest
+    container_name: omniroute
+    restart: unless-stopped
+    stop_grace_period: 40s
+    env_file:
+      - ./omniroute.env
+    environment:
+      PORT: "20128"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: production
+      DATA_DIR: /app/data
+    ports:
+      - "127.0.0.1:20128:20128"
+    volumes:
+      - omniroute_data:/app/data
+    networks:
+      - ai-network
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: litellm
@@ -49,12 +66,27 @@ services:
     depends_on:
       - litellm
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       OPENAI_API_BASE_URL: http://litellm:4000/v1
       OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
       ENABLE_OLLAMA_API: "false"
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      WEBUI_NAME: ${WEBUI_NAME}
+      WEBUI_URL: ${WEBUI_URL}
+      ENABLE_OAUTH: ${ENABLE_OAUTH}
+      ENABLE_OAUTH_SIGNUP: ${ENABLE_OAUTH_SIGNUP}
+      OAUTH_AUTO_REDIRECT: ${OAUTH_AUTO_REDIRECT}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      MICROSOFT_CLIENT_TENANT_ID: ${MICROSOFT_CLIENT_TENANT_ID}
+      MICROSOFT_OAUTH_SCOPE: ${MICROSOFT_OAUTH_SCOPE}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI}
+      OPENID_PROVIDER_URL: ${OPENID_PROVIDER_URL}
+      DEFAULT_USER_ROLE: ${DEFAULT_USER_ROLE}
+      OAUTH_MERGE_ACCOUNTS_BY_EMAIL: ${OAUTH_MERGE_ACCOUNTS_BY_EMAIL}
+      BYPASS_MODEL_ACCESS_CONTROL: ${BYPASS_MODEL_ACCESS_CONTROL}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS}
     volumes:
       - open_webui_data:/app/backend/data
     networks:
@@ -63,6 +95,7 @@ services:
 volumes:
   postgres_data:
   open_webui_data:
+  omniroute_data:
 
 networks:
   ai-network:
